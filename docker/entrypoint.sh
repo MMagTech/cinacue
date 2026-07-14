@@ -10,6 +10,14 @@ mkdir -p "$CONFIG_DIR" "$STREAM_DIR"
 echo "[entrypoint] Movie Channel starting"
 echo "[entrypoint] CONFIG_DIR=$CONFIG_DIR STREAM_DIR=$STREAM_DIR TZ=${TZ:-unset}"
 
+# The bind-mounted /config (Unraid appdata) and /stream (RAM disk) can be owned
+# by any uid on the host. When started as root, take ownership so the
+# unprivileged appuser can write, then re-exec the app as appuser via gosu.
+APP_USER="appuser"
+if [ "$(id -u)" = "0" ]; then
+  chown "$APP_USER:$APP_USER" "$CONFIG_DIR" "$STREAM_DIR" 2>/dev/null || true
+fi
+
 # Report — do not fail. NVENC verification is surfaced to the admin via the
 # diagnostics endpoint; the app must not silently fall back to CPU encoding.
 if command -v ffmpeg >/dev/null 2>&1; then
@@ -25,4 +33,9 @@ fi
 # Clean any stale HLS segments left from a previous run.
 rm -f "$STREAM_DIR"/*.ts "$STREAM_DIR"/*.m3u8 2>/dev/null || true
 
+# Drop privileges to appuser when we started as root; otherwise exec directly
+# (e.g. when the container is already run with a non-root `user:`).
+if [ "$(id -u)" = "0" ]; then
+  exec gosu "$APP_USER" "$@"
+fi
 exec "$@"

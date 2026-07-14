@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tzdata \
         curl \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -48,13 +49,12 @@ COPY --from=frontend /app/static ./app/static
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Non-root user. /config and /stream are created and chowned; they are usually
-# bind-mounted at runtime (appdata + RAM disk).
+# Non-root user. The entrypoint runs as root only long enough to fix ownership
+# of the bind-mounted /config and /stream (Unraid appdata / RAM disk can be
+# owned by any uid), then drops to this user via gosu to run the app.
 RUN useradd --system --create-home --uid 10001 appuser \
     && mkdir -p /config /stream \
     && chown -R appuser:appuser /app /config /stream
-
-USER appuser
 
 EXPOSE 8000
 
