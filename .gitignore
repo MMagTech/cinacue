@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node / frontend build
+frontend/node_modules/
+app/static/
+*.tsbuildinfo
+frontend/vite.config.ts.timestamp-*.mjs
+
+# Runtime data
+/config/
+/stream/
+*.db
+*.hash
+app_secret.key
+
+# Env
+.env
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

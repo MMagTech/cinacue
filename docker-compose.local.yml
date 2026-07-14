@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Desktop / local testing compose (Docker Desktop on Windows/Mac/Linux).
+#
+# Differences from the Unraid compose:
+#   * No `runtime: nvidia` and no external `proxy` network.
+#   * Local bind mounts under ./data instead of /mnt/user/...
+#   * ENCODER defaults to libx264 (software) so it streams WITHOUT a GPU.
+#
+# Quick start:
+#   1) Put your Plex details + a movies folder in a .env file (see below).
+#   2) docker compose -f docker-compose.local.yml up --build
+#   3) Open http://localhost:8090/  (public)  and  /admin  (login).
+#
+# Minimal .env for local use:
+#   ADMIN_PASSWORD=changeme
+#   PLEX_URL=http://192.168.1.10:32400
+#   PLEX_TOKEN=your-plex-token
+#   PLEX_LIBRARY_NAME=Movies
+#   PLEX_PATH_PREFIX=/movies          # how Plex reports paths
+#   MOVIES_DIR=D:/Media/Movies        # a real folder on THIS machine
+#   LOCAL_PATH_PREFIX=/media/movies   # leave as-is (container-side)
+# ---------------------------------------------------------------------------
+services:
+  movie-channel:
+    build: .
+    container_name: movie-channel-local
+    restart: unless-stopped
+
+    ports:
+      - "8090:8000"
+
+    environment:
+      TZ: ${TZ:-America/New_York}
+
+      # First run seeds the admin account; remove after the hash is written.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+      # Plex — required to browse/schedule movies.
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_LIBRARY_NAME: ${PLEX_LIBRARY_NAME:-Movies}
+      PLEX_PATH_PREFIX: ${PLEX_PATH_PREFIX:-/movies}
+      LOCAL_PATH_PREFIX: ${LOCAL_PATH_PREFIX:-/media/movies}
+
+      # Software encoder so it works on a desktop with no NVIDIA GPU.
+      # For production on Unraid use the main compose (h264_nvenc).
+      ENCODER: ${ENCODER:-libx264}
+
+      CONFIG_DIR: /config
+      STREAM_DIR: /stream
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CHANNEL_AUTO_START: ${CHANNEL_AUTO_START:-false}
+
+    volumes:
+      - ./data/config:/config
+      - ./data/stream:/stream
+      # Point MOVIES_DIR at a real folder on this machine (read-only).
+      - ${MOVIES_DIR:-./movies}:/media/movies:ro
+
+    # --- Optional: NVIDIA GPU on the desktop ---------------------------------
+    # If this machine has an NVIDIA GPU and the Container Toolkit, set
+    # ENCODER=h264_nvenc in your .env and uncomment the block below.
+    #
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, compute, video, utility]

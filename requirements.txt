@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+SQLModel==0.0.22
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+passlib[bcrypt]==1.7.4
+itsdangerous==2.2.0
+httpx==0.28.1
+
+# dev / test
+pytest==8.3.4

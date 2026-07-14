@@ -1,0 +1,27 @@
+# Keep the build context small and the image clean.
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+frontend/node_modules/
+app/static/
+*.tsbuildinfo
+frontend/vite.config.ts.timestamp-*.mjs
+
+# Runtime / local data — never bake into the image
+config/
+stream/
+data/
+*.db
+*.hash
+app_secret.key
+.env
+
+tests/
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/

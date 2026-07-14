@@ -1,0 +1,64 @@
+services:
+  movie-channel:
+    build: .
+    container_name: movie-channel
+    restart: unless-stopped
+
+    # NVIDIA GPU access. `runtime: nvidia` works with the classic toolkit on
+    # Unraid. The `deploy.resources` block below is the modern Compose form —
+    # keep whichever your host supports (both are harmless together on Unraid).
+    runtime: nvidia
+
+    ports:
+      - "8090:8000"
+
+    environment:
+      TZ: America/New_York
+
+      # --- Plex (fill in for Milestone 2) ---
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_LIBRARY_NAME: ${PLEX_LIBRARY_NAME:-Movies}
+
+      PLEX_PATH_PREFIX: ${PLEX_PATH_PREFIX:-/movies}
+      LOCAL_PATH_PREFIX: ${LOCAL_PATH_PREFIX:-/media/movies}
+
+      # Seed the admin password on first run, then remove it.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+      # Set true when behind an HTTPS reverse proxy.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # Resume streaming automatically on restart.
+      CHANNEL_AUTO_START: ${CHANNEL_AUTO_START:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+
+      CONFIG_DIR: /config
+      STREAM_DIR: /stream
+
+    volumes:
+      # Persistent appdata: SQLite DB, app secret, admin password hash.
+      - /mnt/user/appdata/movie-channel:/config
+      # Movie library, read-only. Adjust the host path to your setup.
+      - /mnt/user/media/movies:/media/movies:ro
+      # RAM-backed HLS output.
+      - /tmp/movie-channel:/stream
+
+    # Modern Compose GPU reservation (used by newer Docker/Compose). Harmless
+    # alongside `runtime: nvidia` on Unraid.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, video, utility]
+
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
