@@ -20,12 +20,18 @@ fi
 
 # Report — do not fail. NVENC verification is surfaced to the admin via the
 # diagnostics endpoint; the app must not silently fall back to CPU encoding.
+# Capture the encoder list into a variable and match with `case` rather than
+# piping into `grep -q`: under `set -o pipefail`, grep -q closes the pipe as
+# soon as it matches, ffmpeg dies with SIGPIPE, and the pipeline reports
+# failure — which produced a false "not listed" warning even though it works.
 if command -v ffmpeg >/dev/null 2>&1; then
-  if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q h264_nvenc; then
-    echo "[entrypoint] ffmpeg present; h264_nvenc encoder listed."
-  else
-    echo "[entrypoint] WARNING: ffmpeg present but h264_nvenc not listed."
-  fi
+  encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  case "$encoders" in
+    *h264_nvenc*)
+      echo "[entrypoint] ffmpeg present; h264_nvenc encoder listed." ;;
+    *)
+      echo "[entrypoint] WARNING: ffmpeg present but h264_nvenc not listed." ;;
+  esac
 else
   echo "[entrypoint] WARNING: ffmpeg not found on PATH."
 fi

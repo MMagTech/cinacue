@@ -152,6 +152,19 @@ def is_authenticated(request: Request) -> bool:
     return bool(data and data.get("auth"))
 
 
+def session_csrf(request: Request) -> str | None:
+    """Return the CSRF token bound to the current session, if authenticated.
+
+    Lets the SPA re-arm its in-memory CSRF token after a page reload (when the
+    session cookie survives but the token held in JS memory is lost), so write
+    actions don't fail until the user logs in again.
+    """
+    data = _read_session(request)
+    if data and data.get("auth"):
+        return data.get("csrf")
+    return None
+
+
 def require_admin(request: Request) -> None:
     """Dependency: reject unauthenticated requests."""
     if not is_authenticated(request):

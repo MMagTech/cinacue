@@ -32,6 +32,8 @@ class LoginResponse(BaseModel):
 
 class WhoAmIResponse(BaseModel):
     authenticated: bool
+    # Lets the SPA re-arm its in-memory CSRF token after a page reload.
+    csrf_token: Optional[str] = None
 
 
 # --- Encoding settings -----------------------------------------------------

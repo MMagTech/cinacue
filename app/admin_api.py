@@ -63,7 +63,10 @@ def logout(response: Response, _: None = Depends(auth.require_admin)) -> dict:
 
 @router.get("/whoami", response_model=WhoAmIResponse)
 def whoami(request: Request) -> WhoAmIResponse:
-    return WhoAmIResponse(authenticated=auth.is_authenticated(request))
+    return WhoAmIResponse(
+        authenticated=auth.is_authenticated(request),
+        csrf_token=auth.session_csrf(request),
+    )
 
 
 # --- Encoding settings -----------------------------------------------------

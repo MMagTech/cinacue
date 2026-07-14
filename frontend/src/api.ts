@@ -108,8 +108,15 @@ export async function login(password: string): Promise<void> {
 export const logout = () =>
   req<{ ok: boolean }>("/api/admin/logout", { method: "POST" }, true);
 
-export const whoami = () =>
-  req<{ authenticated: boolean }>("/api/admin/whoami");
+export const whoami = async () => {
+  const r = await req<{ authenticated: boolean; csrf_token: string | null }>(
+    "/api/admin/whoami"
+  );
+  // Re-arm the in-memory CSRF token after a page reload (the session cookie
+  // survives but the token held in JS memory is lost), so writes keep working.
+  if (r.authenticated && r.csrf_token) setCsrf(r.csrf_token);
+  return r;
+};
 
 // --- Admin: encoding -------------------------------------------------------
 export const getEncoding = () => req<EncodingSettings>("/api/admin/encoding");
