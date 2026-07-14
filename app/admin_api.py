@@ -6,7 +6,7 @@ checked on the server for all routes below.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import Response as RawResponse
@@ -338,8 +338,11 @@ def _to_out(m) -> ScheduledMovieOut:
         year=m.year,
         poster_url=m.poster_url,
         runtime_ms=m.runtime_ms,
-        scheduled_start=m.scheduled_start,
-        scheduled_end=m.scheduled_end,
+        # Stored naive-UTC; mark as UTC so the JSON carries a +00:00 offset and
+        # the browser converts to the channel timezone instead of assuming the
+        # value is local time (which showed 7pm EDT as 11pm).
+        scheduled_start=m.scheduled_start.replace(tzinfo=timezone.utc),
+        scheduled_end=m.scheduled_end.replace(tzinfo=timezone.utc),
     )
 
 

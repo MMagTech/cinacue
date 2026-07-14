@@ -6,6 +6,8 @@ deliberately no public write routes.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response as RawResponse
 from sqlmodel import Session, select
@@ -24,6 +26,12 @@ from .schemas import (
 router = APIRouter(prefix="/api/public", tags=["public"])
 
 
+def _utc(dt: datetime) -> datetime:
+    """Tag a stored naive-UTC datetime as UTC so its JSON carries +00:00 and the
+    browser converts to the channel timezone rather than assuming local time."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 def _now_playing(session: Session) -> NowPlaying | None:
     movie = scheduler.active_movie(session)
     if movie is None:
@@ -32,8 +40,8 @@ def _now_playing(session: Session) -> NowPlaying | None:
         title=movie.title,
         year=movie.year,
         poster_url=movie.poster_url,
-        scheduled_start=movie.scheduled_start,
-        scheduled_end=movie.scheduled_end,
+        scheduled_start=_utc(movie.scheduled_start),
+        scheduled_end=_utc(movie.scheduled_end),
         progress_seconds=scheduler.playback_offset_seconds(movie),
         runtime_seconds=int(movie.runtime_ms / 1000),
     )
@@ -49,7 +57,7 @@ def status(session: Session = Depends(get_session)) -> PublicStatus:
             title=nxt.title,
             year=nxt.year,
             poster_url=nxt.poster_url,
-            scheduled_start=nxt.scheduled_start,
+            scheduled_start=_utc(nxt.scheduled_start),
         )
         if nxt
         else None
@@ -74,7 +82,7 @@ def upcoming(session: Session = Depends(get_session)) -> list[UpcomingItem]:
             title=m.title,
             year=m.year,
             poster_url=m.poster_url,
-            scheduled_start=m.scheduled_start,
+            scheduled_start=_utc(m.scheduled_start),
         )
         for m in scheduler.upcoming_movies(session, limit=10)
     ]
