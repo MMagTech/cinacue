@@ -129,6 +129,12 @@ def build_ffmpeg_args(
     if hardware:
         args += ["-hwaccel", "cuda"]
 
+    # Read the input at its native frame rate so the HLS output is produced in
+    # real time. Without -re, ffmpeg encodes as fast as the GPU allows, the
+    # sliding-window playlist races ahead of the player, and segments are
+    # deleted before they can be played -> the stream constantly skips forward.
+    args += ["-re"]
+
     if start_offset_seconds > 0:
         args += ["-ss", f"{start_offset_seconds:.3f}"]
 
