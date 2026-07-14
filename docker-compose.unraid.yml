@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# CinaCue — Unraid deployment (pulls the prebuilt image from GHCR).
+#
+# Unlike docker-compose.yml (which builds locally with `build: .`), this file
+# pulls the CI-published image, so Unraid never needs the source or a compiler.
+#
+# Deploy with the "Compose Manager" plugin (Community Applications):
+#   1) Plugins -> Compose Manager -> Add New Stack -> "cinacue".
+#   2) Paste this file. Put your secrets in a .env alongside it (see below).
+#   3) Compose Up.
+#
+# Requires the NVIDIA driver plugin (Unraid: "Nvidia Driver" in CA) so
+# `runtime: nvidia` can expose the GPU for h264_nvenc.
+#
+# Minimal .env (same folder as this file):
+#   ADMIN_PASSWORD=change-me-on-first-run
+#   PLEX_URL=http://192.168.1.10:32400
+#   PLEX_TOKEN=your-plex-token
+#   PLEX_LIBRARY_NAME=Movies
+#   NVIDIA_VISIBLE_DEVICES=GPU-xxxxxxxx   # `nvidia-smi -L` on the host
+# ---------------------------------------------------------------------------
+services:
+  cinacue:
+    image: ghcr.io/mmagtech/cinacue:latest
+    container_name: cinacue
+    restart: unless-stopped
+
+    # NVIDIA GPU access via the classic Unraid runtime.
+    runtime: nvidia
+
+    ports:
+      # host:container — browse at http://<unraid-ip>:8090/  (admin at /admin)
+      - "8090:8000"
+
+    environment:
+      TZ: ${TZ:-America/New_York}
+
+      # --- Plex ---
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_LIBRARY_NAME: ${PLEX_LIBRARY_NAME:-Movies}
+      # Path translation: how Plex reports paths -> where they are mounted here.
+      PLEX_PATH_PREFIX: ${PLEX_PATH_PREFIX:-/movies}
+      LOCAL_PATH_PREFIX: ${LOCAL_PATH_PREFIX:-/media/movies}
+
+      # Seed the admin password on the FIRST run, then remove this line.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+      # --- Encoding (GPU) ---
+      ENCODER: ${ENCODER:-h264_nvenc}
+      ENCODER_PRESET: ${ENCODER_PRESET:-balanced}
+      MAX_RESOLUTION: ${MAX_RESOLUTION:-1080p}
+      VIDEO_BITRATE_KBPS: ${VIDEO_BITRATE_KBPS:-8000}
+      AUDIO_BITRATE_KBPS: ${AUDIO_BITRATE_KBPS:-192}
+
+      # --- Behaviour / security ---
+      # Set true when served through an HTTPS reverse proxy.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      CHANNEL_AUTO_START: ${CHANNEL_AUTO_START:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # NVIDIA plumbing. Pin NVIDIA_VISIBLE_DEVICES to a specific GPU UUID
+      # (`nvidia-smi -L`) if you don't want all GPUs exposed.
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+
+      CONFIG_DIR: /config
+      STREAM_DIR: /stream
+
+    volumes:
+      # Persistent appdata: SQLite DB, app secret, admin password hash.
+      - /mnt/user/appdata/cinacue:/config
+      # Movie library, read-only. Adjust the host path to your share.
+      - /mnt/user/media/movies:/media/movies:ro
+      # RAM-backed HLS output (fast + saves disk wear). Sized generously.
+      - type: tmpfs
+        target: /stream
+        tmpfs:
+          size: 2147483648   # 2 GiB
+
+    # Modern Compose GPU reservation. Harmless alongside `runtime: nvidia`;
+    # newer Docker on Unraid honours this form.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, video, utility]
+
+# --- Optional reverse proxy -------------------------------------------------
+# If you front CinaCue with SWAG/NGINX Proxy Manager on a shared Docker
+# network, uncomment the two `networks:` blocks below and set
+# SESSION_COOKIE_SECURE=true in your .env. Then you can drop the `ports:`
+# mapping above and route by hostname instead.
+#
+#     networks:
+#       - proxy
+#
+# networks:
+#   proxy:
+#     external: true
