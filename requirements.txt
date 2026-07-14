@@ -5,6 +5,10 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 reads bcrypt.__about__.__version__, removed in bcrypt 4.1+,
+# and newer bcrypt raises on passlib's >72-byte self-test. Pin to the last
+# compatible release so the bcrypt backend initialises.
+bcrypt==4.0.1
 itsdangerous==2.2.0
 httpx==0.28.1
 
