@@ -117,6 +117,10 @@ def build_ffmpeg_args(
     NVENC encoders; software encoders (used in tests) omit it.
     """
     seg_pattern = segment_pattern or "segment-%06d.ts"
+    # Fallback GOP cap. The authoritative keyframe placement is -force_key_frames
+    # below, which lands an IDR exactly on every segment boundary regardless of
+    # the source frame rate (films are ~23.976 fps, not 30) so HLS segments stay
+    # keyframe-aligned and players don't stutter at segment edges.
     gop = hls_segment_seconds * 30
     hardware = _is_hardware_encoder(encoder)
 
@@ -146,6 +150,8 @@ def build_ffmpeg_args(
         f"{video_bitrate_kbps * 2}k",
         "-g",
         str(gop),
+        "-force_key_frames",
+        f"expr:gte(t,n_forced*{hls_segment_seconds})",
         "-pix_fmt",
         "yuv420p",
     ]
