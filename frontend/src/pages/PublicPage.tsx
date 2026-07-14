@@ -39,7 +39,17 @@ function LivePlayer() {
     let hls: Hls | null = null;
 
     if (Hls.isSupported()) {
-      hls = new Hls({ liveSyncDurationCount: 3, enableWorker: true });
+      // Keep the client's memory footprint small: by default hls.js retains an
+      // unbounded back-buffer (it grew to minutes, ~150 MB, before the browser
+      // evicted). Cap the buffer tightly for a live channel that only needs to
+      // stay near the live edge.
+      hls = new Hls({
+        liveSyncDurationCount: 3,
+        enableWorker: true,
+        backBufferLength: 15, // seconds kept behind the playhead (rewind window)
+        maxBufferLength: 15, // target seconds buffered ahead
+        maxBufferSize: 20 * 1000 * 1000, // hard cap ~20 MB regardless of bitrate
+      });
       hls.loadSource(STREAM_URL);
       hls.attachMedia(video);
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
