@@ -50,16 +50,14 @@ export default function LibraryPicker() {
   const openAdd = (m: PlexMovie) => {
     setAddKey(m.rating_key);
     setAddMsg(null);
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    setStartInput(
-      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T20:00`
-    );
+    setStartInput("20:00");
   };
 
   const confirmAdd = async (m: PlexMovie) => {
     try {
-      await addScheduledMovie(m.rating_key, startInput);
+      const [h, mm] = startInput.split(":").map(Number);
+      const startMinute = (h || 0) * 60 + (mm || 0);
+      await addScheduledMovie(m.rating_key, startMinute);
       setAddMsg({ key: m.rating_key, text: "Added to schedule.", ok: true });
       setAddKey(null);
     } catch (err) {
@@ -171,10 +169,11 @@ export default function LibraryPicker() {
               {addKey === m.rating_key ? (
                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <input
-                    type="datetime-local"
+                    type="time"
                     value={startInput}
                     onChange={(e) => setStartInput(e.target.value)}
-                    style={{ maxWidth: 220 }}
+                    style={{ maxWidth: 160 }}
+                    title="Daily start time"
                   />
                   <button className="btn" onClick={() => confirmAdd(m)}>
                     Confirm

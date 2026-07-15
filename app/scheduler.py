@@ -1,139 +1,240 @@
-"""Schedule queries and timezone helpers.
+"""Daily-repeating schedule with per-weekday on/off, plus timezone helpers.
 
-The foundation needs read-side scheduling logic: which movie is active right
-now, what is coming up, and how to build the rolling 7-day calendar. The
-FFmpeg-driving stream loop arrives in a later milestone; these pure functions
-are what it (and the public API) will build on, so they are unit-tested now.
+The schedule is a single daily lineup: each movie sits at a time-of-day
+(``start_minute``, in the channel timezone) and airs every day at that slot.
+Which weekdays actually air is a channel setting (a 7-bit mask); on inactive
+days the channel is off air. A movie is governed by the day it *starts*, so a
+late film that begins on an active day plays through past midnight even if the
+next day is off.
 
-Convention: everything persisted and compared internally is naive UTC. Display
-happens only at the API edge, using the configured timezone.
+Convention: absolute times are naive UTC; the daily slot is wall-clock local.
+Occurrences are computed against the timezone each day, so DST is handled at
+read time.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Optional
+from math import ceil
+from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
 
+from .database import get_settings_row
 from .models import ScheduledMovie
+
+DAY_MINUTES = 24 * 60
+ALL_DAYS_MASK = 127  # bits 0..6 set
+WEEKDAY_NAMES = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def to_utc_naive(dt: datetime) -> datetime:
-    """Normalise any datetime to naive UTC."""
-    if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+# --- active-days mask helpers ----------------------------------------------
+def mask_to_days(mask: int) -> List[int]:
+    """Active weekday numbers (0=Mon..6=Sun) from a 7-bit mask, sorted."""
+    return [d for d in range(7) if mask & (1 << d)]
 
 
-def local_day_bounds_utc(day: date, tz_name: str) -> tuple[datetime, datetime]:
-    """Return [start, end) of a local calendar day expressed in naive UTC."""
-    tz = ZoneInfo(tz_name)
-    start_local = datetime(day.year, day.month, day.day, tzinfo=tz)
-    end_local = start_local + timedelta(days=1)
-    return (
-        start_local.astimezone(timezone.utc).replace(tzinfo=None),
-        end_local.astimezone(timezone.utc).replace(tzinfo=None),
+def days_to_mask(days: List[int]) -> int:
+    """7-bit mask from a list of weekday numbers (0=Mon..6=Sun)."""
+    mask = 0
+    for d in days:
+        if 0 <= d <= 6:
+            mask |= 1 << d
+    return mask
+
+
+def _day_active(weekday: int, mask: int) -> bool:
+    return bool(mask & (1 << weekday))
+
+
+# --- timezone helpers ------------------------------------------------------
+def _settings(session: Session):
+    return get_settings_row(session)
+
+
+def _local_now(now: datetime, tz_name: str) -> datetime:
+    """Convert naive-UTC ``now`` to an aware datetime in the channel tz."""
+    return now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+
+
+def _to_utc_naive(local_dt: datetime) -> datetime:
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def runtime_minutes(movie: ScheduledMovie) -> int:
+    return max(1, ceil(movie.runtime_ms / 60000)) if movie.runtime_ms else 1
+
+
+def _slot_start(local_day: date, start_minute: int, tz: ZoneInfo) -> datetime:
+    """Aware local datetime for a slot on a given local date (DST-correct)."""
+    naive = datetime(local_day.year, local_day.month, local_day.day) + timedelta(
+        minutes=start_minute
     )
+    return naive.replace(tzinfo=tz)
 
 
-def rolling_days(tz_name: str, count: int = 7, now: Optional[datetime] = None) -> List[date]:
-    """List of ``count`` local dates starting today in the configured tz."""
-    tz = ZoneInfo(tz_name)
+def _most_recent_start(movie: ScheduledMovie, now_local: datetime, tz: ZoneInfo) -> datetime:
+    """Aware local datetime of this movie's latest daily start at or before now."""
+    start = _slot_start(now_local.date(), movie.start_minute, tz)
+    if start > now_local:
+        start = _slot_start(now_local.date() - timedelta(days=1), movie.start_minute, tz)
+    return start
+
+
+def _next_active_start(
+    movie: ScheduledMovie, now_local: datetime, tz: ZoneInfo, mask: int
+) -> Optional[datetime]:
+    """Aware local datetime of this movie's next start after now on an active day."""
+    for i in range(0, 8):
+        day = now_local.date() + timedelta(days=i)
+        if not _day_active(day.weekday(), mask):
+            continue
+        start = _slot_start(day, movie.start_minute, tz)
+        if start > now_local:
+            return start
+    return None
+
+
+# --- occurrence resolution -------------------------------------------------
+def _all(session: Session) -> List[ScheduledMovie]:
+    return list(session.exec(select(ScheduledMovie)))
+
+
+def current_occurrence_start(
+    movie: ScheduledMovie, tz_name: str, mask: int, now: Optional[datetime] = None
+) -> Optional[datetime]:
+    """Naive-UTC start of the occurrence containing ``now``, or None if off.
+
+    The occurrence airs only if the weekday it *started on* is active.
+    """
     now = now or utcnow()
-    today_local = now.replace(tzinfo=timezone.utc).astimezone(tz).date()
-    return [today_local + timedelta(days=i) for i in range(count)]
+    tz = ZoneInfo(tz_name)
+    now_local = _local_now(now, tz_name)
+    start = _most_recent_start(movie, now_local, tz)
+    end = start + timedelta(minutes=runtime_minutes(movie))
+    if start <= now_local < end and _day_active(start.weekday(), mask):
+        return _to_utc_naive(start)
+    return None
 
 
-def movies_for_day(
-    session: Session, day: date, tz_name: str
-) -> List[ScheduledMovie]:
-    start_utc, end_utc = local_day_bounds_utc(day, tz_name)
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start >= start_utc)
-        .where(ScheduledMovie.scheduled_start < end_utc)
-        .order_by(ScheduledMovie.scheduled_start)
-    )
-    return list(session.exec(stmt))
+def occurrence_bounds(
+    movie: ScheduledMovie, tz_name: str, mask: int, now: Optional[datetime] = None
+) -> Optional[Tuple[datetime, datetime]]:
+    """Naive-UTC (start, end) of the current occurrence, else the next one.
+
+    Returns None if the movie has no upcoming airing (e.g. all days inactive).
+    """
+    now = now or utcnow()
+    tz = ZoneInfo(tz_name)
+    now_local = _local_now(now, tz_name)
+    start = _most_recent_start(movie, now_local, tz)
+    end = start + timedelta(minutes=runtime_minutes(movie))
+    if start <= now_local < end and _day_active(start.weekday(), mask):
+        return _to_utc_naive(start), _to_utc_naive(end)
+    nxt = _next_active_start(movie, now_local, tz, mask)
+    if nxt is None:
+        return None
+    return _to_utc_naive(nxt), _to_utc_naive(nxt + timedelta(minutes=runtime_minutes(movie)))
+
+
+def _run_start(
+    movie: ScheduledMovie, tz_name: str, mask: int, now: datetime, preroll_seconds: int
+) -> Optional[datetime]:
+    """Naive-UTC start the encoder should use now (active, or within pre-roll)."""
+    current = current_occurrence_start(movie, tz_name, mask, now)
+    if current is not None:
+        return current
+    if preroll_seconds > 0:
+        tz = ZoneInfo(tz_name)
+        now_local = _local_now(now, tz_name)
+        nxt = _next_active_start(movie, now_local, tz, mask)
+        if nxt is not None and nxt <= now_local + timedelta(seconds=preroll_seconds):
+            return _to_utc_naive(nxt)
+    return None
 
 
 def active_movie(
     session: Session, now: Optional[datetime] = None
 ) -> Optional[ScheduledMovie]:
-    """The movie where ``scheduled_start <= now < scheduled_end``.
-
-    Live-TV semantics: at most one movie is active. If schedules overlap (which
-    the admin API prevents on write) we return the earliest-starting match.
-    """
+    """The movie airing right now (live-TV semantics: at most one)."""
     now = now or utcnow()
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start <= now)
-        .where(ScheduledMovie.scheduled_end > now)
-        .order_by(ScheduledMovie.scheduled_start)
-    )
-    return session.exec(stmt).first()
+    row = _settings(session)
+    for movie in _all(session):
+        if current_occurrence_start(movie, row.timezone, row.active_days_mask, now) is not None:
+            return movie
+    return None
 
 
 def active_or_imminent_movie(
-    session: Session,
-    preroll_seconds: int = 0,
-    now: Optional[datetime] = None,
+    session: Session, preroll_seconds: int = 0, now: Optional[datetime] = None
 ) -> Optional[ScheduledMovie]:
-    """The movie to have ffmpeg running for right now, including pre-roll.
-
-    Like :func:`active_movie` but also returns a movie whose start is at most
-    ``preroll_seconds`` in the future, so the encoder can warm up before air
-    time. The playback offset is clamped to 0 for a not-yet-started movie by
-    :func:`playback_offset_seconds`, so pre-roll simply begins the film at 0.
-    """
+    """The movie to have ffmpeg running for now, including pre-roll warm-up."""
     now = now or utcnow()
-    horizon = now + timedelta(seconds=max(0, preroll_seconds))
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start <= horizon)
-        .where(ScheduledMovie.scheduled_end > now)
-        .order_by(ScheduledMovie.scheduled_start)
-    )
-    return session.exec(stmt).first()
+    row = _settings(session)
+    for movie in _all(session):
+        if _run_start(movie, row.timezone, row.active_days_mask, now, preroll_seconds) is not None:
+            return movie
+    return None
 
 
 def next_movie(
     session: Session, now: Optional[datetime] = None
 ) -> Optional[ScheduledMovie]:
+    """The next movie to air after now (soonest upcoming active-day slot)."""
     now = now or utcnow()
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start > now)
-        .order_by(ScheduledMovie.scheduled_start)
-    )
-    return session.exec(stmt).first()
+    row = _settings(session)
+    tz = ZoneInfo(row.timezone)
+    now_local = _local_now(now, row.timezone)
+    best: Optional[ScheduledMovie] = None
+    best_start: Optional[datetime] = None
+    for movie in _all(session):
+        start = _next_active_start(movie, now_local, tz, row.active_days_mask)
+        if start is None:
+            continue
+        if best_start is None or start < best_start:
+            best_start = start
+            best = movie
+    return best
 
 
 def upcoming_movies(
     session: Session, limit: int = 5, now: Optional[datetime] = None
 ) -> List[ScheduledMovie]:
+    """The next ``limit`` airings in chronological order over coming days."""
     now = now or utcnow()
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start > now)
-        .order_by(ScheduledMovie.scheduled_start)
-        .limit(limit)
-    )
-    return list(session.exec(stmt))
+    row = _settings(session)
+    tz = ZoneInfo(row.timezone)
+    now_local = _local_now(now, row.timezone)
+    dated: List[Tuple[datetime, ScheduledMovie]] = []
+    for movie in _all(session):
+        start = _next_active_start(movie, now_local, tz, row.active_days_mask)
+        if start is not None:
+            dated.append((start, movie))
+    dated.sort(key=lambda pair: pair[0])
+    return [movie for _, movie in dated[:limit]]
 
 
 def playback_offset_seconds(
-    movie: ScheduledMovie, now: Optional[datetime] = None
+    movie: ScheduledMovie, tz_name: str, mask: int, now: Optional[datetime] = None
 ) -> int:
-    """Seconds elapsed since the movie's scheduled start, clamped to runtime."""
+    """Seconds since the current occurrence's start, clamped to the runtime."""
     now = now or utcnow()
-    elapsed = int((now - movie.scheduled_start).total_seconds())
+    start = current_occurrence_start(movie, tz_name, mask, now)
+    if start is None:
+        return 0
+    elapsed = int((now - start).total_seconds())
     runtime = int(movie.runtime_ms / 1000)
     if elapsed < 0:
         return 0
@@ -142,36 +243,38 @@ def playback_offset_seconds(
     return elapsed
 
 
+# --- lineup + overlap ------------------------------------------------------
+def daily_lineup(session: Session) -> List[ScheduledMovie]:
+    """All movies in the daily lineup, sorted by start time."""
+    return sorted(_all(session), key=lambda m: m.start_minute)
+
+
 def has_overlap(
     session: Session,
-    start: datetime,
-    end: datetime,
+    start_minute: int,
+    runtime_ms: int,
     exclude_id: Optional[int] = None,
 ) -> bool:
-    """True if [start, end) overlaps any existing scheduled movie.
+    """True if a daily slot overlaps another, on the circular 24-hour timeline.
 
-    Two intervals overlap iff ``a.start < b.end`` and ``b.start < a.end``.
+    A late movie may spill past midnight, so each existing slot is tested at
+    -1/0/+1 day offsets to catch wraparound against the next day's lineup.
     """
-    stmt = (
-        select(ScheduledMovie)
-        .where(ScheduledMovie.scheduled_start < end)
-        .where(ScheduledMovie.scheduled_end > start)
-    )
-    for existing in session.exec(stmt):
-        if exclude_id is not None and existing.id == exclude_id:
+    a = start_minute
+    ra = max(1, ceil(runtime_ms / 60000))
+    for movie in _all(session):
+        if exclude_id is not None and movie.id == exclude_id:
             continue
-        return True
+        b = movie.start_minute
+        rb = max(1, ceil(movie.runtime_ms / 60000))
+        for k in (-DAY_MINUTES, 0, DAY_MINUTES):
+            if a < b + k + rb and b + k < a + ra:
+                return True
     return False
 
 
 def local_naive_to_utc(local_dt: datetime, tz_name: str) -> datetime:
-    """Interpret a naive local datetime in ``tz_name`` and return naive UTC.
-
-    Used when the admin picks a start time: the browser sends a wall-clock
-    ``YYYY-MM-DDTHH:MM`` value which we anchor to the configured timezone before
-    persisting in UTC. A naive input is assumed to be local; an aware input is
-    respected.
-    """
+    """Interpret a naive local datetime in ``tz_name`` and return naive UTC."""
     tz = ZoneInfo(tz_name)
     if local_dt.tzinfo is None:
         local_dt = local_dt.replace(tzinfo=tz)

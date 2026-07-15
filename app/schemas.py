@@ -90,14 +90,15 @@ class ScheduledMovieOut(BaseModel):
     year: Optional[int] = None
     poster_url: Optional[str] = None
     runtime_ms: int
-    scheduled_start: datetime
-    scheduled_end: datetime
+    # Daily slot: minutes from local midnight (channel timezone).
+    start_minute: int
 
 
-class ScheduleDay(BaseModel):
-    date: str
-    label: str
+class ScheduleResponse(BaseModel):
+    # The daily lineup (sorted by start time) plus which weekdays air.
     movies: List[ScheduledMovieOut]
+    active_days: List[int]  # weekday numbers on air (0=Mon..6=Sun)
+    timezone: str
 
 
 # --- Plex (admin only) -----------------------------------------------------
@@ -129,12 +130,15 @@ class PlexMovieOut(BaseModel):
 # --- Schedule mutation (admin) ---------------------------------------------
 class ScheduleCreate(BaseModel):
     plex_rating_key: str
-    # Wall-clock local start, e.g. "2026-07-17T19:00". Interpreted in the
-    # configured timezone, then stored in UTC.
-    start_local: str
+    # Daily slot: minutes from local midnight (0..1439).
+    start_minute: int = Field(ge=0, le=1439)
 
 
 class ScheduleUpdate(BaseModel):
-    # New wall-clock local start. Same field is used for "edit time" and
-    # "move to another day" — both simply change the start.
-    start_local: str
+    # New daily slot time.
+    start_minute: int = Field(ge=0, le=1439)
+
+
+class ActiveDaysUpdate(BaseModel):
+    # Weekday numbers that should air (0=Mon..6=Sun); others go off air.
+    active_days: List[int]

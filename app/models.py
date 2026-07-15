@@ -35,6 +35,10 @@ class Settings(SQLModel, table=True):
 
     timezone: str = "America/New_York"
 
+    # Which weekdays the channel airs, as a 7-bit mask (bit 0 = Monday ...
+    # bit 6 = Sunday). Default 127 = all days on. Inactive days are off air.
+    active_days_mask: int = 127
+
     # Plex (populated in a later milestone)
     plex_url: str = ""
     plex_library_name: str = "Movies"
@@ -55,7 +59,15 @@ class Settings(SQLModel, table=True):
 
 
 class ScheduledMovie(SQLModel, table=True):
-    """A single movie placed at a fixed time on the rolling calendar."""
+    """A movie in the repeating daily lineup.
+
+    The schedule is a single daily lineup that repeats every day: a movie sits
+    at a time-of-day (``start_minute``, in the channel timezone) and airs each
+    day at that slot. Which weekdays actually air is a channel-level setting
+    (:attr:`Settings.active_days_mask`); on inactive days the channel is off.
+    Absolute air times and the live offset are computed against the timezone at
+    read time, so DST is handled correctly.
+    """
 
     __tablename__ = "scheduled_movies"
 
@@ -68,9 +80,8 @@ class ScheduledMovie(SQLModel, table=True):
     runtime_ms: int = 0
     source_path: str = ""
 
-    # Stored in UTC (naive). Displayed in the configured timezone.
-    scheduled_start: datetime = Field(index=True)
-    scheduled_end: datetime = Field(index=True)
+    # Daily slot: minutes from local midnight (0..1439), channel timezone.
+    start_minute: int = Field(index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

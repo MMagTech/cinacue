@@ -27,22 +27,42 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 
 
 def _utc(dt: datetime) -> datetime:
-    """Tag a stored naive-UTC datetime as UTC so its JSON carries +00:00 and the
+    """Tag a naive-UTC datetime as UTC so its JSON carries +00:00 and the
     browser converts to the channel timezone rather than assuming local time."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _upcoming_item(session: Session, movie) -> UpcomingItem | None:
+    """Build an UpcomingItem from a movie's next occurrence, if it has one."""
+    row = get_settings_row(session)
+    bounds = scheduler.occurrence_bounds(movie, row.timezone, row.active_days_mask)
+    if bounds is None:
+        return None
+    return UpcomingItem(
+        title=movie.title,
+        year=movie.year,
+        poster_url=movie.poster_url,
+        scheduled_start=_utc(bounds[0]),
+    )
+
+
 def _now_playing(session: Session) -> NowPlaying | None:
+    row = get_settings_row(session)
     movie = scheduler.active_movie(session)
     if movie is None:
+        return None
+    bounds = scheduler.occurrence_bounds(movie, row.timezone, row.active_days_mask)
+    if bounds is None:
         return None
     return NowPlaying(
         title=movie.title,
         year=movie.year,
         poster_url=movie.poster_url,
-        scheduled_start=_utc(movie.scheduled_start),
-        scheduled_end=_utc(movie.scheduled_end),
-        progress_seconds=scheduler.playback_offset_seconds(movie),
+        scheduled_start=_utc(bounds[0]),
+        scheduled_end=_utc(bounds[1]),
+        progress_seconds=scheduler.playback_offset_seconds(
+            movie, row.timezone, row.active_days_mask
+        ),
         runtime_seconds=int(movie.runtime_ms / 1000),
     )
 
@@ -52,16 +72,7 @@ def status(session: Session = Depends(get_session)) -> PublicStatus:
     row = get_settings_row(session)
     playing = _now_playing(session)
     nxt = scheduler.next_movie(session)
-    next_up = (
-        UpcomingItem(
-            title=nxt.title,
-            year=nxt.year,
-            poster_url=nxt.poster_url,
-            scheduled_start=_utc(nxt.scheduled_start),
-        )
-        if nxt
-        else None
-    )
+    next_up = _upcoming_item(session, nxt) if nxt else None
     return PublicStatus(
         state="on_air" if playing else "off_air",
         timezone=row.timezone,
@@ -77,15 +88,11 @@ def now_playing(session: Session = Depends(get_session)) -> NowPlaying | None:
 
 @router.get("/upcoming", response_model=list[UpcomingItem])
 def upcoming(session: Session = Depends(get_session)) -> list[UpcomingItem]:
-    return [
-        UpcomingItem(
-            title=m.title,
-            year=m.year,
-            poster_url=m.poster_url,
-            scheduled_start=_utc(m.scheduled_start),
-        )
+    items = [
+        _upcoming_item(session, m)
         for m in scheduler.upcoming_movies(session, limit=10)
     ]
+    return [item for item in items if item is not None]
 
 
 @router.get("/channel-config", response_model=PublicChannelConfig)

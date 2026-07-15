@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Iterator
 
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .config import settings
@@ -22,8 +23,44 @@ engine = create_engine(
 def init_db() -> None:
     """Create tables and ensure the singleton settings row exists."""
     settings.config_dir.mkdir(parents=True, exist_ok=True)
+    _drop_legacy_schedule()
     SQLModel.metadata.create_all(engine)
+    _ensure_settings_columns()
     _seed_settings()
+
+
+def _drop_legacy_schedule() -> None:
+    """Drop a pre-daily ``scheduled_movies`` table so the new schema is created.
+
+    The schedule moved from absolute dates to a repeating daily lineup, a
+    breaking column change SQLite cannot migrate in place. If the existing
+    table predates ``start_minute``, drop it (schedule is rebuilt by the admin).
+    Runs once — after recreation the column exists and this is a no-op.
+    """
+    inspector = inspect(engine)
+    if "scheduled_movies" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("scheduled_movies")}
+    if "start_minute" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE scheduled_movies"))
+
+
+def _ensure_settings_columns() -> None:
+    """Add columns introduced after the settings table was first created.
+
+    SQLite can't do this via ``create_all``; add them in place so an existing
+    deployment keeps its settings (timezone, Plex, encoding) across the upgrade.
+    """
+    inspector = inspect(engine)
+    if "settings" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("settings")}
+    if "active_days_mask" not in columns:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE settings ADD COLUMN active_days_mask INTEGER DEFAULT 127")
+            )
 
 
 def _seed_settings() -> None:

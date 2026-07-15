@@ -146,7 +146,10 @@ class ChannelController:
                 mgr.reset_retry()
 
             mgr.retry_count += 1
-            self._launch(active, sched.playback_offset_seconds(active), row)
+            offset = sched.playback_offset_seconds(
+                active, row.timezone, row.active_days_mask
+            )
+            self._launch(active, offset, row)
 
     def _launch(self, movie: ScheduledMovie, offset: float, row) -> None:
         self.manager.start(

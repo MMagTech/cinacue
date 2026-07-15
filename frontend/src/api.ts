@@ -82,14 +82,13 @@ export interface ScheduledMovie {
   year: number | null;
   poster_url: string | null;
   runtime_ms: number;
-  scheduled_start: string;
-  scheduled_end: string;
+  start_minute: number; // minutes from local midnight (channel tz)
 }
 
-export interface ScheduleDay {
-  date: string;
-  label: string;
+export interface ScheduleResponse {
   movies: ScheduledMovie[];
+  active_days: number[]; // weekdays on air (0=Mon..6=Sun)
+  timezone: string;
 }
 
 // --- Public ----------------------------------------------------------------
@@ -129,19 +128,26 @@ export const updateEncoding = (patch: Partial<EncodingSettings>) =>
   );
 
 // --- Admin: schedule -------------------------------------------------------
-export const getSchedule = () => req<ScheduleDay[]>("/api/admin/schedule");
+export const getSchedule = () => req<ScheduleResponse>("/api/admin/schedule");
 
-export const addScheduledMovie = (plex_rating_key: string, start_local: string) =>
+export const addScheduledMovie = (plex_rating_key: string, start_minute: number) =>
   req<ScheduledMovie>(
     "/api/admin/schedule",
-    { method: "POST", body: JSON.stringify({ plex_rating_key, start_local }) },
+    { method: "POST", body: JSON.stringify({ plex_rating_key, start_minute }) },
     true
   );
 
-export const updateScheduledMovie = (id: number, start_local: string) =>
+export const updateScheduledMovie = (id: number, start_minute: number) =>
   req<ScheduledMovie>(
     `/api/admin/schedule/${id}`,
-    { method: "PATCH", body: JSON.stringify({ start_local }) },
+    { method: "PATCH", body: JSON.stringify({ start_minute }) },
+    true
+  );
+
+export const setActiveDays = (active_days: number[]) =>
+  req<ScheduleResponse>(
+    "/api/admin/schedule/active-days",
+    { method: "PUT", body: JSON.stringify({ active_days }) },
     true
   );
 

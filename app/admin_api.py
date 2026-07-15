@@ -18,6 +18,7 @@ from .models import ScheduledMovie, utcnow
 from .plex_client import PlexError
 from .schedule_service import ScheduleError
 from .schemas import (
+    ActiveDaysUpdate,
     EncodingSettings,
     EncodingSettingsUpdate,
     LoginRequest,
@@ -25,8 +26,8 @@ from .schemas import (
     PlexMovieOut,
     PlexStatus,
     ScheduleCreate,
-    ScheduleDay,
     ScheduledMovieOut,
+    ScheduleResponse,
     ScheduleUpdate,
     WhoAmIResponse,
 )
@@ -200,57 +201,40 @@ def plex_poster(
 
 
 # --- Schedule: read --------------------------------------------------------
-@router.get("/schedule", response_model=list[ScheduleDay])
+@router.get("/schedule", response_model=ScheduleResponse)
 def get_schedule(
     session: Session = Depends(get_session),
     _: None = Depends(auth.require_admin),
-) -> list[ScheduleDay]:
+) -> ScheduleResponse:
     row = get_settings_row(session)
-    tz_name = row.timezone
-    days: list[ScheduleDay] = []
-    for d in scheduler.rolling_days(tz_name, count=7):
-        movies = scheduler.movies_for_day(session, d, tz_name)
-        days.append(
-            ScheduleDay(
-                date=d.isoformat(),
-                label=d.strftime("%A, %B %-d"),
-                movies=[_to_out(m) for m in movies],
-            )
-        )
-    return days
-
-
-@router.get("/schedule/day/{day}", response_model=ScheduleDay)
-def get_schedule_day(
-    day: str,
-    session: Session = Depends(get_session),
-    _: None = Depends(auth.require_admin),
-) -> ScheduleDay:
-    row = get_settings_row(session)
-    try:
-        d = date.fromisoformat(day)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date; use YYYY-MM-DD.")
-    movies = scheduler.movies_for_day(session, d, row.timezone)
-    return ScheduleDay(
-        date=d.isoformat(),
-        label=d.strftime("%A, %B %-d"),
-        movies=[_to_out(m) for m in movies],
+    return ScheduleResponse(
+        movies=[_to_out(m) for m in scheduler.daily_lineup(session)],
+        active_days=scheduler.mask_to_days(row.active_days_mask),
+        timezone=row.timezone,
     )
 
 
-# --- Schedule: mutate (Milestone 3) ----------------------------------------
-def _parse_start_local(value: str, tz_name: str) -> datetime:
-    try:
-        local_dt = datetime.fromisoformat(value)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid start time; use YYYY-MM-DDTHH:MM.",
-        )
-    return scheduler.local_naive_to_utc(local_dt, tz_name)
+@router.put("/schedule/active-days", response_model=ScheduleResponse)
+def set_active_days(
+    payload: ActiveDaysUpdate,
+    session: Session = Depends(get_session),
+    _: None = Depends(auth.require_csrf),
+) -> ScheduleResponse:
+    row = get_settings_row(session)
+    row.active_days_mask = scheduler.days_to_mask(payload.active_days)
+    row.updated_at = utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    log.info("active days set to %s", scheduler.mask_to_days(row.active_days_mask))
+    return ScheduleResponse(
+        movies=[_to_out(m) for m in scheduler.daily_lineup(session)],
+        active_days=scheduler.mask_to_days(row.active_days_mask),
+        timezone=row.timezone,
+    )
 
 
+# --- Schedule: mutate ------------------------------------------------------
 @router.post("/schedule", response_model=ScheduledMovieOut, status_code=201)
 def add_scheduled_movie(
     payload: ScheduleCreate,
@@ -260,7 +244,6 @@ def add_scheduled_movie(
     if not plex_service.plex_configured():
         raise HTTPException(status_code=503, detail="Plex is not configured.")
     row = get_settings_row(session)
-    start_utc = _parse_start_local(payload.start_local, row.timezone)
 
     client = plex_service.make_client(row)
     try:
@@ -269,20 +252,24 @@ def add_scheduled_movie(
         raise HTTPException(status_code=404, detail=str(exc))
 
     try:
-        new_row = schedule_service.build_scheduled_movie(movie, start_utc, row)
+        new_row = schedule_service.build_scheduled_movie(
+            movie, payload.start_minute, row
+        )
     except ScheduleError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    if scheduler.has_overlap(session, new_row.scheduled_start, new_row.scheduled_end):
+    if scheduler.has_overlap(session, new_row.start_minute, new_row.runtime_ms):
         raise HTTPException(
             status_code=409,
-            detail="That time overlaps another scheduled movie.",
+            detail="That time overlaps another movie in the daily lineup.",
         )
 
     session.add(new_row)
     session.commit()
     session.refresh(new_row)
-    log.info("schedule add id=%s '%s' start=%s", new_row.id, new_row.title, new_row.scheduled_start)
+    log.info(
+        "schedule add id=%s '%s' minute=%s", new_row.id, new_row.title, new_row.start_minute
+    )
     return _to_out(new_row)
 
 
@@ -293,24 +280,19 @@ def update_scheduled_movie(
     session: Session = Depends(get_session),
     _: None = Depends(auth.require_csrf),
 ) -> ScheduledMovieOut:
-    row = get_settings_row(session)
     existing = session.get(ScheduledMovie, movie_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Scheduled movie not found.")
 
-    start_utc = _parse_start_local(payload.start_local, row.timezone)
-    from .media_probe import calculate_end_time
-
-    end_utc = calculate_end_time(start_utc, existing.runtime_ms)
-
-    if scheduler.has_overlap(session, start_utc, end_utc, exclude_id=movie_id):
+    if scheduler.has_overlap(
+        session, payload.start_minute, existing.runtime_ms, exclude_id=movie_id
+    ):
         raise HTTPException(
             status_code=409,
-            detail="That time overlaps another scheduled movie.",
+            detail="That time overlaps another movie in the daily lineup.",
         )
 
-    existing.scheduled_start = start_utc
-    existing.scheduled_end = end_utc
+    existing.start_minute = payload.start_minute
     existing.updated_at = utcnow()
     session.add(existing)
     session.commit()
@@ -341,11 +323,7 @@ def _to_out(m) -> ScheduledMovieOut:
         year=m.year,
         poster_url=m.poster_url,
         runtime_ms=m.runtime_ms,
-        # Stored naive-UTC; mark as UTC so the JSON carries a +00:00 offset and
-        # the browser converts to the channel timezone instead of assuming the
-        # value is local time (which showed 7pm EDT as 11pm).
-        scheduled_start=m.scheduled_start.replace(tzinfo=timezone.utc),
-        scheduled_end=m.scheduled_end.replace(tzinfo=timezone.utc),
+        start_minute=m.start_minute,
     )
 
 
@@ -355,20 +333,25 @@ from .stream_runtime import controller, manager  # noqa: E402
 
 def _channel_payload(session: Session) -> dict:
     """Manager status enriched with live schedule context."""
+    row = get_settings_row(session)
+    tz = row.timezone
+    mask = row.active_days_mask
     st = manager.status()
     st["enabled"] = controller.enabled
     active = scheduler.active_movie(session)
     if active is not None:
-        st["live_offset_seconds"] = scheduler.playback_offset_seconds(active)
+        bounds = scheduler.occurrence_bounds(active, tz, mask)
+        st["live_offset_seconds"] = scheduler.playback_offset_seconds(active, tz, mask)
         st["scheduled_title"] = active.title
-        st["scheduled_start"] = active.scheduled_start.isoformat() + "Z"
-        st["scheduled_end"] = active.scheduled_end.isoformat() + "Z"
+        st["scheduled_start"] = bounds[0].isoformat() + "Z" if bounds else None
+        st["scheduled_end"] = bounds[1].isoformat() + "Z" if bounds else None
     else:
         st["live_offset_seconds"] = None
         st["scheduled_title"] = None
     nxt = scheduler.next_movie(session)
     st["next_title"] = nxt.title if nxt else None
-    st["next_start"] = (nxt.scheduled_start.isoformat() + "Z") if nxt else None
+    nxt_bounds = scheduler.occurrence_bounds(nxt, tz, mask) if nxt else None
+    st["next_start"] = (nxt_bounds[0].isoformat() + "Z") if nxt_bounds else None
     return st
 
 
