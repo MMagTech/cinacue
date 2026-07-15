@@ -95,6 +95,17 @@ export interface ScheduleResponse {
 export const getStatus = () => req<PublicStatus>("/api/public/status");
 export const getUpcoming = () => req<UpcomingItem[]>("/api/public/upcoming");
 
+export interface AccessState {
+  required: boolean;
+  granted: boolean;
+}
+export const getAccessState = () => req<AccessState>("/api/public/access-state");
+export const submitAccessCode = (code: string) =>
+  req<{ ok: boolean }>("/api/public/access", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+
 // --- Admin: auth -----------------------------------------------------------
 export async function login(password: string): Promise<void> {
   const r = await req<{ ok: boolean; csrf_token: string }>(

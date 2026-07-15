@@ -53,6 +53,15 @@ app = FastAPI(title="Movie Channel", version=__version__, lifespan=lifespan)
 
 
 @app.middleware("http")
+async def stream_access_gate(request: Request, call_next):
+    """When a shared viewer code is set, the raw HLS stream requires it too —
+    otherwise the code would be trivially bypassed by hitting /stream directly."""
+    if request.url.path.startswith("/stream/") and not auth.has_public_access(request):
+        return JSONResponse({"detail": "Access code required."}, status_code=401)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def security_headers(request: Request, call_next):
     """Baseline hardening headers on every response."""
     response = await call_next(request)

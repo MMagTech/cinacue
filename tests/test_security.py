@@ -63,9 +63,13 @@ def test_admin_status_requires_auth():
 
 
 def test_openapi_has_no_public_write_routes():
+    # The public API is read-only, with one intentional exception: submitting
+    # the shared viewer access code. It mutates no server state — it only
+    # rate-limits and sets an auth cookie — so it is allowed to be a POST.
+    allowed_writes = {"/api/public/access"}
     spec = client.get("/openapi.json").json()
     for path, methods in spec["paths"].items():
-        if path.startswith("/api/public/"):
+        if path.startswith("/api/public/") and path not in allowed_writes:
             for verb in methods:
                 assert verb.lower() in ("get", "head", "options"), (
                     f"public path {path} exposes write verb {verb}"

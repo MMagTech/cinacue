@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # so the session cookie is only sent over secure connections.
     session_cookie_secure: bool = False
 
+    # --- Public access (viewer) ---------------------------------------------
+    # Shared code friends enter to watch. Blank = the viewer is open (LAN use).
+    # When set, the viewer page, public API, and the HLS stream all require it.
+    public_access_code: str = ""
+
     # --- Encoding defaults --------------------------------------------------
     max_resolution: MaxResolution = MaxResolution.p1080
     video_bitrate_kbps: int = 8000

@@ -45,6 +45,8 @@ services:
     #   TRAEFIK_NETWORK=proxy
     # Also set SESSION_COOKIE_SECURE=true in .env when served over HTTPS.
     labels:
+      # Container icon shown in the Unraid Docker tab (raw GitHub URL).
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/MMagTech/cinacue/main/assets/icon-mono-white.png"
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-proxy}"
       # Router: match requests for your hostname on the HTTPS entrypoint.
@@ -81,6 +83,8 @@ services:
 
       # Seed the admin password on the FIRST run, then remove this line.
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Shared code friends enter to watch (blank = open viewer for LAN use).
+      PUBLIC_ACCESS_CODE: ${PUBLIC_ACCESS_CODE:-}
 
       # --- Encoding (GPU) ---
       ENCODER: ${ENCODER:-h264_nvenc}
@@ -114,8 +118,9 @@ services:
     volumes:
       # Persistent appdata: SQLite DB, app secret, admin password hash.
       - /mnt/user/appdata/cinacue:/config
-      # Movie library, read-only. Adjust the host path to your share.
-      - /mnt/user/media/movies:/media/movies:ro
+      # Movie library, read-only. Mounted at /data/movies to match the path
+      # Plex reports, so no path translation is needed.
+      - /mnt/user/data/media/movies:/data/movies:ro
       # RAM-backed HLS output (fast + saves disk wear). Sized generously.
       - type: tmpfs
         target: /stream

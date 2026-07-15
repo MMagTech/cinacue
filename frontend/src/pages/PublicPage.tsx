@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Hls from "hls.js";
-import { getStatus, getUpcoming, PublicStatus, UpcomingItem } from "../api";
+import {
+  getStatus,
+  getUpcoming,
+  getAccessState,
+  submitAccessCode,
+  PublicStatus,
+  UpcomingItem,
+  ApiError,
+} from "../api";
 
 const STREAM_URL = "/stream/channel.m3u8";
 
@@ -127,16 +135,64 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
       onClick={wake}
     >
       <video ref={videoRef} autoPlay playsInline muted={muted} />
+      {muted && (
+        <button className="sound-hint" onClick={toggleMute} aria-label="Turn on sound">
+          <span aria-hidden="true">🔊</span> Tap For Sound
+        </button>
+      )}
       <div className={`player-overlay${chrome ? "" : " hidden"}`}>
         <div className="progress" style={{ marginBottom: 12 }}>
-          <button className="chip" onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
-            {muted ? "🔇" : "🔊"}
+          <button className="chip" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute" : "Mute"}>
+            <span aria-hidden="true">{muted ? "🔇" : "🔊"}</span>
           </button>
           <span className="time">{fmtDur(progressSeconds)}</span>
           <div className="bar"><i style={{ width: `${pct}%` }} /></div>
           <span className="time">{fmtDur(runtimeSeconds)}</span>
-          <button className="chip" onClick={fullscreen} title="Fullscreen">⛶</button>
+          <button className="chip" onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen">
+            <span aria-hidden="true">⛶</span>
+          </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AccessGate({ onGranted }: { onGranted: () => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await submitAccessCode(code);
+      onGranted();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) {
+        setError("Too many attempts — try again in a little while.");
+      } else {
+        setError("Incorrect access code.");
+      }
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="viewer">
+      <div className="v-top"><span className="wordmark">CINA<b>CUE</b></span></div>
+      <div className="login-wrap">
+        <form className="card login-card" onSubmit={submit}>
+          <div className="wordmark" style={{ marginBottom: 4 }}>CINA<b>CUE</b></div>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 20 }}>Enter The Access Code To Watch</div>
+          <span className="flabel">Access Code</span>
+          <input type="password" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+          {error && <div className="error">{error}</div>}
+          <div style={{ marginTop: 18 }}>
+            <button className="btn" type="submit" disabled={busy || !code}>{busy ? "Checking…" : "Watch"}</button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -145,8 +201,17 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
 export default function PublicPage() {
   const [status, setStatus] = useState<PublicStatus | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
+  // null = checking; true = may watch; false = needs the shared code
+  const [allowed, setAllowed] = useState<boolean | null>(null);
 
   useEffect(() => {
+    getAccessState()
+      .then((a) => setAllowed(!a.required || a.granted))
+      .catch(() => setAllowed(true)); // if the check fails, don't hard-block
+  }, []);
+
+  useEffect(() => {
+    if (!allowed) return;
     let alive = true;
     const load = async () => {
       try {
@@ -165,7 +230,18 @@ export default function PublicPage() {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [allowed]);
+
+  if (allowed === null) {
+    return (
+      <div className="viewer">
+        <div className="v-top"><span className="wordmark">CINA<b>CUE</b></span></div>
+      </div>
+    );
+  }
+  if (!allowed) {
+    return <AccessGate onGranted={() => setAllowed(true)} />;
+  }
 
   const tz = status?.timezone ?? "UTC";
   const onAir = status?.state === "on_air";
