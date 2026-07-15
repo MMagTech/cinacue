@@ -15,9 +15,9 @@ export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
       onSuccess();
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
-        setError("Too many attempts. Please wait and try again.");
+        setError("Too many attempts — wait a moment and try again.");
       } else {
-        setError("Invalid password.");
+        setError("Incorrect password.");
       }
     } finally {
       setBusy(false);
@@ -25,29 +25,25 @@ export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <div className="container">
-      <div className="login-wrap">
-        <div className="brand" style={{ marginBottom: 20 }}>
-          Movie Channel — Admin
+    <div className="login-wrap">
+      <form className="card login-card" onSubmit={submit}>
+        <div className="wordmark" style={{ marginBottom: 4 }}>CINA<b>CUE</b></div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 20 }}>Admin Sign In</div>
+        <span className="flabel">Administrator Password</span>
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+        />
+        {error && <div className="error">{error}</div>}
+        <div style={{ marginTop: 18 }}>
+          <button className="btn" type="submit" disabled={busy || !password}>
+            {busy ? "Signing In…" : "Sign In"}
+          </button>
         </div>
-        <form className="panel" onSubmit={submit}>
-          <label htmlFor="pw">Administrator password</label>
-          <input
-            id="pw"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoFocus
-          />
-          {error && <div className="error">{error}</div>}
-          <div style={{ marginTop: 18 }}>
-            <button className="btn" type="submit" disabled={busy || !password}>
-              {busy ? "Signing in…" : "Sign in"}
-            </button>
-          </div>
-        </form>
-      </div>
+      </form>
     </div>
   );
 }

@@ -14,33 +14,40 @@ function fmtOffset(sec: number | null): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
-  return `${h > 0 ? h + "h " : ""}${m}m ${s}s`;
+  const mm = String(m).padStart(h > 0 ? 2 : 1, "0");
+  return h > 0 ? `${h}:${mm}:${String(s).padStart(2, "0")}` : `${mm}:${String(s).padStart(2, "0")}`;
 }
 
-const stateColor: Record<string, string> = {
-  streaming: "var(--ok)",
-  starting: "var(--accent)",
-  stopping: "var(--accent)",
-  error: "var(--danger)",
-  offline: "var(--muted)",
-};
+function fmtUptime(sec: number | null): string {
+  if (sec == null) return "—";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function Tile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}>
-      <span className="now-meta">{label}</span>
-      <span>{value ?? "—"}</span>
+    <div className="tile">
+      <div className="l">{label}</div>
+      <div className="v">{value ?? "—"}</div>
+      {sub ? <div className="sub">{sub}</div> : null}
     </div>
   );
 }
 
-function Check({ ok, label, detail }: { ok: boolean; label: string; detail?: string }) {
+function Check({ ok, name, detail }: { ok: boolean; name: string; detail?: string }) {
   return (
-    <div className="up-next-row">
-      <span>{label}</span>
-      <span style={{ color: ok ? "var(--ok)" : "var(--danger)" }}>
-        {ok ? "OK" : "FAIL"}
-        {detail ? ` · ${detail}` : ""}
+    <div className="row">
+      <span className="name">
+        {name}
+        {detail ? <small>{detail}</small> : null}
+      </span>
+      <span className={`res ${ok ? "ok" : "bad"}`}>
+        {ok ? <span className="tick" /> : <span className="cross">✕</span>}
+        {ok ? "OK" : "Failed"}
       </span>
     </div>
   );
@@ -74,7 +81,7 @@ export default function DashboardPage() {
     try {
       setSt(start ? await startChannel() : await stopChannel());
     } catch {
-      setError("Action failed. Check your session and try again.");
+      setError("That didn't go through — reload the page and sign in again.");
     } finally {
       setBusy(false);
     }
@@ -85,112 +92,86 @@ export default function DashboardPage() {
     try {
       setDiag(await getDiagnostics());
     } catch {
-      setError("Diagnostics failed.");
+      setError("System checks failed to run.");
     } finally {
       setDiagBusy(false);
     }
   };
 
-  if (!st) {
-    return <div className="panel">Loading…</div>;
-  }
+  if (!st) return <div className="panel">Loading…</div>;
+
+  const streaming = st.state === "streaming" && st.enabled;
+  const gpuVal = st.gpu_encode_percent != null ? `${st.gpu_encode_percent}%` : "—";
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div className="panel">
-        <div className="topbar" style={{ marginBottom: 4 }}>
-          <span className="status-pill" style={{ color: stateColor[st.state] }}>
-            <span className="dot" /> {st.state.toUpperCase()}
-            {st.enabled ? "" : " (channel off)"}
-          </span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn" onClick={() => toggle(true)} disabled={busy || st.enabled}>
-              Start
-            </button>
-            <button
-              className="btn secondary"
-              onClick={() => toggle(false)}
-              disabled={busy || !st.enabled}
-            >
-              Stop
-            </button>
-          </div>
-        </div>
-        {st.error && <div className="error">{st.error}</div>}
-        {error && <div className="error">{error}</div>}
-      </div>
-
-      <div className="panel">
-        <Row label="Current movie" value={st.current_title ?? st.scheduled_title} />
-        <Row label="Live position" value={fmtOffset(st.live_offset_seconds)} />
-        <Row label="Started at offset" value={fmtOffset(st.start_offset_seconds)} />
-        <Row
-          label="Source"
-          value={
-            st.source_resolution
-              ? `${st.source_resolution}${st.source_codec ? " " + st.source_codec : ""}`
-              : "—"
-          }
-        />
-        <Row label="Actual output" value={st.output_resolution} />
-        <Row
-          label="Video bitrate"
-          value={st.video_bitrate_kbps ? `${st.video_bitrate_kbps} kbps` : "—"}
-        />
-        <Row label="Encoder" value={st.encoder} />
-        <Row
-          label="FFmpeg"
-          value={
-            st.ffmpeg_alive ? `running (pid ${st.ffmpeg_pid})` : "not running"
-          }
-        />
-        <Row label="Retries" value={st.retry_count} />
-        <Row label="Up next" value={st.next_title} />
-      </div>
-
-      <div className="panel">
-        <div className="topbar" style={{ marginBottom: 8 }}>
-          <strong>Diagnostics</strong>
-          <button className="btn secondary" onClick={runDiag} disabled={diagBusy}>
-            {diagBusy ? "Checking…" : "Run checks"}
-          </button>
-        </div>
-        {diag ? (
-          <div>
-            <Check ok={diag.database_reachable} label="Database reachable" />
-            <Check ok={diag.plex_reachable} label="Plex reachable" />
-            <Check ok={diag.movie_mount_readable} label="Movie mount readable" />
-            <Check ok={diag.stream_dir_writable} label="Stream dir writable" />
-            <Check ok={diag.ffmpeg_installed} label="FFmpeg installed" />
-            <Check ok={diag.ffprobe_installed} label="FFprobe installed" />
-            <Check ok={diag.nvenc_listed} label="h264_nvenc listed" />
-            <Check
-              ok={diag.nvenc_available}
-              label="NVENC hardware encode"
-              detail={diag.nvenc_detail}
-            />
-            <Check ok={diag.ffmpeg_process_alive} label="FFmpeg process alive" />
-          </div>
+    <>
+      <div className="dash-status">
+        {streaming ? (
+          <span className="live-pill"><span className="live" /> Streaming</span>
         ) : (
-          <div className="empty">Run checks to verify Plex, the mount, FFmpeg, and NVENC.</div>
+          <span className="off-pill">
+            <span className="dot" /> {st.enabled ? st.state : "Channel Off"}
+          </span>
         )}
+        <span className="up">Up {fmtUptime(st.uptime_seconds)} · {st.retry_count} Retries</span>
+        <span className="spacer" />
+        <button className="btn" onClick={() => toggle(true)} disabled={busy || st.enabled}>Start</button>
+        <button className="btn stop" onClick={() => toggle(false)} disabled={busy || !st.enabled}>Stop</button>
       </div>
 
-      <div className="panel">
-        <strong>Recent FFmpeg log</strong>
-        <pre
-          style={{
-            marginTop: 8,
-            maxHeight: 220,
-            overflow: "auto",
-            fontSize: 12,
-            color: "var(--muted)",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {st.recent_logs.length ? st.recent_logs.join("\n") : "No output yet."}
-        </pre>
+      {(st.error || error) && <div className="error">{st.error || error}</div>}
+
+      <div className="tiles">
+        <Tile label="Now Playing" value={st.current_title ?? st.scheduled_title ?? "—"} />
+        <Tile label="Live Position" value={fmtOffset(st.live_offset_seconds)} />
+        <Tile
+          label="Output"
+          value={st.output_resolution ?? "—"}
+          sub={st.encoder ? `${st.encoder}${st.video_bitrate_kbps ? " · " + st.video_bitrate_kbps + " kbps" : ""}` : undefined}
+        />
+        <Tile label="GPU Encode" value={gpuVal} sub={st.gpu_name ?? "GPU"} />
+        <Tile
+          label="Source"
+          value={st.source_resolution ?? "—"}
+          sub={st.source_codec ?? undefined}
+        />
+        <Tile
+          label="FFmpeg"
+          value={<><span className={st.ffmpeg_alive ? "ok-dot" : "dead-dot"} />{st.ffmpeg_alive ? `pid ${st.ffmpeg_pid}` : "Stopped"}</>}
+          sub={`${st.retry_count} Restarts`}
+        />
+        <Tile label="Retries" value={st.retry_count} />
+        <Tile label="Up Next" value={st.next_title ?? "—"} />
       </div>
-    </div>
+
+      <div className="dash-cols">
+        <div>
+          <div className="panel-head">
+            <h3>System Checks</h3>
+            <button className="chip" onClick={runDiag} disabled={diagBusy}>
+              {diagBusy ? "Checking…" : "Run Checks"}
+            </button>
+          </div>
+          {diag ? (
+            <div className="diag">
+              <Check ok={diag.plex_reachable} name="Plex Server" />
+              <Check ok={diag.database_reachable} name="Database" />
+              <Check ok={diag.movie_mount_readable} name="Movie Mount" />
+              <Check ok={diag.stream_dir_writable} name="Stream Buffer" detail="RAM · /stream" />
+              <Check ok={diag.ffmpeg_installed && diag.ffprobe_installed} name="FFmpeg / FFprobe" />
+              <Check ok={diag.nvenc_available} name="NVENC" detail={diag.nvenc_detail} />
+            </div>
+          ) : (
+            <div className="panel empty">Run checks to verify Plex, the mount, FFmpeg, and NVENC.</div>
+          )}
+        </div>
+        <div>
+          <div className="panel-head"><h3>Recent Activity</h3></div>
+          <div className="logs">
+            {st.recent_logs.length ? st.recent_logs.map((l, i) => <div key={i}>{l}</div>) : <div>No output yet.</div>}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

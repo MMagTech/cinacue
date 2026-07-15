@@ -178,6 +178,9 @@ export interface ChannelStatus {
   next_start: string | null;
   retry_count: number;
   recent_logs: string[];
+  uptime_seconds: number | null;
+  gpu_name: string | null;
+  gpu_encode_percent: number | null;
 }
 
 export interface Diagnostics {

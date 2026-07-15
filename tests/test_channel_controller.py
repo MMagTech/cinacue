@@ -15,6 +15,7 @@ class FakeManager:
         self.state = StreamState.offline
         self.current_movie_id = None
         self.started = None
+        self.started_at = None
         self.stopped = 0
 
     def is_process_alive(self):
@@ -22,6 +23,9 @@ class FakeManager:
 
     def reset_retry(self):
         self.retry_count = 0
+
+    def notice_exit(self):
+        pass
 
     def stop(self):
         self.stopped += 1
@@ -50,8 +54,12 @@ def _patch(monkeypatch, active):
 
     monkeypatch.setattr(ss, "Session", fake_session)
     monkeypatch.setattr(ss, "get_settings_row", lambda s: SettingsRow(id=1))
-    monkeypatch.setattr(ss.sched, "active_movie", lambda s: active)
-    monkeypatch.setattr(ss.sched, "playback_offset_seconds", lambda m: 123)
+    monkeypatch.setattr(
+        ss.sched, "active_or_imminent_movie", lambda s, preroll=0: active
+    )
+    monkeypatch.setattr(
+        ss.sched, "playback_offset_seconds", lambda m, tz, mask: 123
+    )
     monkeypatch.setattr(ss.sched, "next_movie", lambda s: None)
 
 

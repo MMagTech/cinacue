@@ -5,9 +5,14 @@ the same instances without import cycles.
 """
 from __future__ import annotations
 
+import time
+
 from .config import settings
 from .stream_manager import StreamManager
 from .stream_scheduler import ChannelController
+
+# Wall-clock start of the process, for the dashboard uptime readout.
+app_started_at = time.time()
 
 manager = StreamManager(
     settings.stream_dir,

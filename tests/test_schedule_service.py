@@ -1,4 +1,4 @@
-"""Unit tests for building scheduled-movie rows and local->UTC conversion."""
+"""Unit tests for building daily-lineup rows and local->UTC conversion."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -37,24 +37,22 @@ def _row():
     )
 
 
-def test_build_sets_end_from_runtime_and_translates_path():
-    start = datetime(2026, 7, 17, 23, 0, 0)  # UTC
-    row = _row()
-    m = build_scheduled_movie(_movie(116), start, row)
-    assert m.scheduled_end == datetime(2026, 7, 18, 0, 56, 0)
+def test_build_sets_slot_and_translates_path():
+    m = build_scheduled_movie(_movie(116), 19 * 60, _row())  # 19:00
+    assert m.start_minute == 19 * 60
     assert m.source_path == "/media/movies/Back to the Future (1985)/movie.mkv"
     assert m.poster_url == public_poster_url("42")
     assert m.runtime_ms == 116 * 60_000
 
 
 def test_build_without_thumb_has_no_poster():
-    m = build_scheduled_movie(_movie(thumb=None), datetime(2026, 7, 17, 23), _row())
+    m = build_scheduled_movie(_movie(thumb=None), 19 * 60, _row())
     assert m.poster_url is None
 
 
 def test_build_rejects_zero_runtime():
     with pytest.raises(ScheduleError):
-        build_scheduled_movie(_movie(runtime_min=0), datetime(2026, 7, 17, 23), _row())
+        build_scheduled_movie(_movie(runtime_min=0), 19 * 60, _row())
 
 
 def test_local_naive_to_utc_new_york_summer():
