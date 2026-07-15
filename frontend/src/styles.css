@@ -104,6 +104,14 @@ a { color: var(--gold); }
   transition: opacity 0.4s ease;
 }
 .player-overlay.hidden { opacity: 0; pointer-events: none; }
+.sound-hint {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(5, 7, 11, 0.7); border: 1px solid var(--line-2); color: var(--ink);
+  padding: 9px 16px; border-radius: 999px; cursor: pointer;
+  font-family: var(--display); text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; font-weight: 700;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
 .np-k { font-family: var(--display); text-transform: uppercase; letter-spacing: 0.24em; font-size: 10.5px; color: var(--muted); margin: 0 0 6px; }
 .np-title { font-family: var(--display); font-weight: 800; font-size: clamp(22px, 4vw, 38px); letter-spacing: -0.01em; margin: 0 0 6px; line-height: 1.02; }
 .np-title span { color: var(--muted); font-weight: 500; }

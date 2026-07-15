@@ -29,12 +29,20 @@ SESSION_COOKIE = "mc_session"
 CSRF_HEADER = "X-CSRF-Token"
 SESSION_MAX_AGE = 60 * 60 * 12  # 12 hours
 
+# Public viewer access (shared code) — a separate, long-lived cookie so friends
+# only enter the code occasionally, with its own gentler lockout.
+ACCESS_COOKIE = "cc_access"
+ACCESS_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+_ACCESS_MAX_ATTEMPTS = 8
+_ACCESS_WINDOW_SECONDS = 15 * 60  # 15-minute lockout window
+
 # Rate limiting: max attempts per window per client key.
 _MAX_ATTEMPTS = 5
 _WINDOW_SECONDS = 300
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _login_attempts: Dict[str, Deque[float]] = defaultdict(deque)
+_access_attempts: Dict[str, Deque[float]] = defaultdict(deque)
 
 
 # --- App secret ------------------------------------------------------------
@@ -135,6 +143,70 @@ def start_session(response: Response) -> str:
 
 def clear_session(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+# --- Public viewer access (shared code) ------------------------------------
+def public_access_required() -> bool:
+    """True when a shared viewer code is configured (viewer is gated)."""
+    return bool((settings.public_access_code or "").strip())
+
+
+def verify_access_code(code: str) -> bool:
+    expected = (settings.public_access_code or "").strip()
+    if not expected:
+        return False
+    return hmac.compare_digest(code.strip(), expected)
+
+
+def grant_public_access(response: Response) -> None:
+    """Issue the long-lived viewer-access cookie after a correct code."""
+    token = _serializer.dumps({"access": True}, salt="cc-access")
+    response.set_cookie(
+        ACCESS_COOKIE,
+        token,
+        max_age=ACCESS_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=settings.session_cookie_secure,
+        path="/",
+    )
+
+
+def has_public_access(request: Request) -> bool:
+    """True if the viewer may watch: gate disabled, admin session, or valid code."""
+    if not public_access_required():
+        return True
+    if is_authenticated(request):  # the admin can always watch
+        return True
+    raw = request.cookies.get(ACCESS_COOKIE)
+    if not raw:
+        return False
+    try:
+        data = _serializer.loads(raw, max_age=ACCESS_MAX_AGE, salt="cc-access")
+    except BadSignature:
+        return False
+    return bool(data and data.get("access"))
+
+
+def check_access_rate_limit(request: Request) -> None:
+    now = time.time()
+    key = _client_key(request)
+    attempts = _access_attempts[key]
+    while attempts and now - attempts[0] > _ACCESS_WINDOW_SECONDS:
+        attempts.popleft()
+    if len(attempts) >= _ACCESS_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Try again in a little while.",
+        )
+
+
+def record_access_failure(request: Request) -> None:
+    _access_attempts[_client_key(request)].append(time.time())
+
+
+def reset_access_attempts(request: Request) -> None:
+    _access_attempts.pop(_client_key(request), None)
 
 
 def _read_session(request: Request) -> dict | None:

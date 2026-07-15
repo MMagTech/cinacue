@@ -82,6 +82,16 @@ class PublicChannelConfig(BaseModel):
     channel_name: str = "Movie Channel"
 
 
+class AccessState(BaseModel):
+    # Whether a shared code is required, and whether this visitor already has it.
+    required: bool
+    granted: bool
+
+
+class AccessSubmit(BaseModel):
+    code: str
+
+
 # --- Schedule (admin) ------------------------------------------------------
 class ScheduledMovieOut(BaseModel):
     id: int

@@ -8,15 +8,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import status as http_status
 from fastapi.responses import Response as RawResponse
 from sqlmodel import Session, select
 
-from . import plex_service, scheduler
+from . import auth, plex_service, scheduler
 from .database import get_session, get_settings_row
 from .models import ScheduledMovie
 from .plex_client import PlexError
 from .schemas import (
+    AccessState,
+    AccessSubmit,
     NowPlaying,
     PublicChannelConfig,
     PublicStatus,
@@ -24,6 +27,35 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/public", tags=["public"])
+
+
+def require_access(request: Request) -> None:
+    """Gate a public route behind the shared viewer code, when one is set."""
+    if not auth.has_public_access(request):
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Access code required.")
+
+
+# --- Access (shared viewer code) -------------------------------------------
+@router.get("/access-state", response_model=AccessState)
+def access_state(request: Request) -> AccessState:
+    """Whether the viewer needs a code, and whether this visitor already has it."""
+    return AccessState(
+        required=auth.public_access_required(),
+        granted=auth.has_public_access(request),
+    )
+
+
+@router.post("/access")
+def submit_access(payload: AccessSubmit, request: Request, response: Response) -> dict:
+    if not auth.public_access_required():
+        return {"ok": True}
+    auth.check_access_rate_limit(request)
+    if not auth.verify_access_code(payload.code):
+        auth.record_access_failure(request)
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Incorrect access code.")
+    auth.reset_access_attempts(request)
+    auth.grant_public_access(response)
+    return {"ok": True}
 
 
 def _utc(dt: datetime) -> datetime:
@@ -68,7 +100,9 @@ def _now_playing(session: Session) -> NowPlaying | None:
 
 
 @router.get("/status", response_model=PublicStatus)
-def status(session: Session = Depends(get_session)) -> PublicStatus:
+def status(
+    session: Session = Depends(get_session), _: None = Depends(require_access)
+) -> PublicStatus:
     row = get_settings_row(session)
     playing = _now_playing(session)
     nxt = scheduler.next_movie(session)
@@ -82,12 +116,16 @@ def status(session: Session = Depends(get_session)) -> PublicStatus:
 
 
 @router.get("/now-playing", response_model=NowPlaying | None)
-def now_playing(session: Session = Depends(get_session)) -> NowPlaying | None:
+def now_playing(
+    session: Session = Depends(get_session), _: None = Depends(require_access)
+) -> NowPlaying | None:
     return _now_playing(session)
 
 
 @router.get("/upcoming", response_model=list[UpcomingItem])
-def upcoming(session: Session = Depends(get_session)) -> list[UpcomingItem]:
+def upcoming(
+    session: Session = Depends(get_session), _: None = Depends(require_access)
+) -> list[UpcomingItem]:
     items = [
         _upcoming_item(session, m)
         for m in scheduler.upcoming_movies(session, limit=10)
@@ -104,7 +142,9 @@ def channel_config(session: Session = Depends(get_session)) -> PublicChannelConf
 
 @router.get("/poster/{rating_key}")
 def poster(
-    rating_key: str, session: Session = Depends(get_session)
+    rating_key: str,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_access),
 ) -> RawResponse:
     """Serve a poster for a *scheduled* movie only.
 
