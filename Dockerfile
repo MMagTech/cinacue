@@ -28,13 +28,27 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CONFIG_DIR=/config \
     STREAM_DIR=/stream
 
+# jellyfin-ffmpeg: a purpose-built ffmpeg for hardware transcoding with full
+# GPU HDR tonemapping (tonemap_cuda) wired up — used instead of the distro
+# ffmpeg (4.4, no tonemap_cuda). Symlinked so the app's `ffmpeg`/`ffprobe`
+# calls resolve to it. Kept on the same CUDA/Ubuntu base (no driver change).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
-        ffmpeg \
         tzdata \
         curl \
         gosu \
+        gnupg \
+        ca-certificates \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://repo.jellyfin.org/jellyfin_team.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/jellyfin.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/jellyfin.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends jellyfin-ffmpeg7 \
+    && ln -sf /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg \
+    && ln -sf /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

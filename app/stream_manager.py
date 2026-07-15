@@ -234,6 +234,7 @@ class StreamManager:
                 f"source {probe.width}x{probe.height} {probe.video_codec} -> "
                 f"output {dims.output_width}x{dims.output_height} "
                 f"({'no upscale' if dims.upscaled_blocked else 'scaled'})"
+                + (f" [HDR {probe.color_transfer} -> SDR tonemap]" if probe.is_hdr else "")
             )
 
             self.clean_stream_dir()
@@ -247,6 +248,7 @@ class StreamManager:
                 preset=preset,
                 start_offset_seconds=offset_seconds,
                 segment_pattern=str(self.segment_pattern),
+                is_hdr=probe.is_hdr,
                 ffmpeg_bin=self.ffmpeg_bin,
             )
 

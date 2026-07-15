@@ -108,6 +108,7 @@ def build_ffmpeg_args(
     start_offset_seconds: float = 0.0,
     segment_pattern: Optional[str] = None,
     hls_segment_seconds: int = 4,
+    is_hdr: bool = False,
     ffmpeg_bin: str = "ffmpeg",
 ) -> List[str]:
     """Build the FFmpeg argument list for a live HLS stream.
@@ -124,10 +125,17 @@ def build_ffmpeg_args(
     gop = hls_segment_seconds * 30
     hardware = _is_hardware_encoder(encoder)
 
+    # HDR only matters when the GPU encoder is in play (tonemap runs on the card).
+    hdr = hardware and is_hdr
+
     args: List[str] = [ffmpeg_bin, "-hide_banner", "-y"]
 
     if hardware:
         args += ["-hwaccel", "cuda"]
+        if hdr:
+            # Keep decoded frames in GPU memory so tonemap + scale run on the
+            # card (no CPU download/round-trip).
+            args += ["-hwaccel_output_format", "cuda"]
 
     # Read the input at its native frame rate so the HLS output is produced in
     # real time. Without -re, ffmpeg encodes as fast as the GPU allows, the
@@ -140,10 +148,24 @@ def build_ffmpeg_args(
 
     args += ["-i", source_path]
 
+    if hdr:
+        # HDR -> SDR entirely on the GPU: tonemap first (in high bit depth,
+        # tonemap_cuda's defaults target BT.709 SDR), then resize and downconvert
+        # to 8-bit nv12 for the H.264 encoder. Frames stay on the GPU, so no
+        # -pix_fmt (that would force a CPU format).
+        vf = (
+            f"tonemap_cuda=tonemap=bt2390,"
+            f"scale_cuda={dims.output_width}:{dims.output_height}:format=nv12"
+        )
+        pix_fmt_args: List[str] = []
+    else:
+        vf = f"scale={dims.output_width}:{dims.output_height}"
+        pix_fmt_args = ["-pix_fmt", "yuv420p"]
+
     preset_value = nvenc_preset(preset) if hardware else "veryfast"
     args += [
         "-vf",
-        f"scale={dims.output_width}:{dims.output_height}",
+        vf,
         "-c:v",
         encoder,
         "-preset",
@@ -158,9 +180,7 @@ def build_ffmpeg_args(
         str(gop),
         "-force_key_frames",
         f"expr:gte(t,n_forced*{hls_segment_seconds})",
-        "-pix_fmt",
-        "yuv420p",
-    ]
+    ] + pix_fmt_args
 
     args += ["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k", "-ac", "2"]
 

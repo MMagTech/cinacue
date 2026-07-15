@@ -31,6 +31,12 @@ class ProbeError(Exception):
     """Raised when the source cannot be probed (missing file, ffprobe error)."""
 
 
+# Video transfer characteristics that mean HDR (need tonemapping to SDR):
+#   smpte2084   = PQ / HDR10 / Dolby Vision
+#   arib-std-b67 = HLG
+_HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+
+
 @dataclass
 class ProbeResult:
     width: Optional[int]
@@ -39,6 +45,8 @@ class ProbeResult:
     audio_codec: Optional[str]
     container: Optional[str]
     duration_seconds: Optional[float]
+    color_transfer: Optional[str] = None
+    is_hdr: bool = False
 
 
 def parse_ffprobe(data: dict) -> ProbeResult:
@@ -51,6 +59,7 @@ def parse_ffprobe(data: dict) -> ProbeResult:
     w = video.get("width")
     h = video.get("height")
     duration = fmt.get("duration") or video.get("duration")
+    transfer = video.get("color_transfer")
 
     return ProbeResult(
         width=int(w) if w else None,
@@ -59,6 +68,8 @@ def parse_ffprobe(data: dict) -> ProbeResult:
         audio_codec=audio.get("codec_name"),
         container=fmt.get("format_name"),
         duration_seconds=float(duration) if duration else None,
+        color_transfer=transfer,
+        is_hdr=transfer in _HDR_TRANSFERS,
     )
 
 

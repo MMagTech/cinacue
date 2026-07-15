@@ -74,3 +74,49 @@ def test_no_offset_omits_ss():
         start_offset_seconds=0,
     )
     assert "-ss" not in args
+
+
+def _hdr_args():
+    dims = calculate_output_dimensions(3840, 2160, MaxResolution.p720)
+    return build_ffmpeg_args(
+        source_path="/media/movies/HDR (2020)/movie.mkv",
+        output_playlist="/stream/channel.m3u8",
+        dims=dims,
+        video_bitrate_kbps=4000,
+        audio_bitrate_kbps=192,
+        is_hdr=True,
+    )
+
+
+def test_hdr_uses_gpu_tonemap_pipeline():
+    args = _hdr_args()
+    assert "-hwaccel_output_format" in args  # frames stay on the GPU
+    vf = args[args.index("-vf") + 1]
+    assert "tonemap_cuda" in vf
+    assert "scale_cuda=1280:720:format=nv12" in vf
+    assert "-pix_fmt" not in args  # nv12 is set in the filter, on the GPU
+
+
+def test_sdr_path_is_unchanged_by_hdr_feature():
+    args = _args()  # is_hdr defaults False
+    assert args[args.index("-vf") + 1] == "scale=1920:1080"
+    assert "-pix_fmt" in args
+    assert "-hwaccel_output_format" not in args
+    assert "tonemap_cuda" not in " ".join(args)
+
+
+def test_software_encoder_ignores_hdr():
+    # HDR tonemap is GPU-only; a software encoder must never get GPU filters.
+    dims = calculate_output_dimensions(1920, 1080, MaxResolution.p720)
+    args = build_ffmpeg_args(
+        source_path="/x.mkv",
+        output_playlist="/stream/channel.m3u8",
+        dims=dims,
+        video_bitrate_kbps=3000,
+        audio_bitrate_kbps=128,
+        encoder="libx264",
+        is_hdr=True,
+    )
+    assert "tonemap_cuda" not in " ".join(args)
+    assert "-hwaccel_output_format" not in args
+    assert "-pix_fmt" in args
