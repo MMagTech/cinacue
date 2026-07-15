@@ -96,9 +96,12 @@ def test_login_and_authorized_flow():
     assert ok.json()["video_bitrate_kbps"] == 6000
 
 
-def test_schedule_returns_seven_days():
+def test_schedule_returns_lineup_and_active_days():
     c = TestClient(app)
     c.post("/api/admin/login", json={"password": "test-admin-password"})
     r = c.get("/api/admin/schedule")
     assert r.status_code == 200
-    assert len(r.json()) == 7
+    body = r.json()
+    assert isinstance(body["movies"], list)
+    assert isinstance(body["active_days"], list)
+    assert "timezone" in body
