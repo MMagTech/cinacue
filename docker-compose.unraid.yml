@@ -28,9 +28,45 @@ services:
     # NVIDIA GPU access via the classic Unraid runtime.
     runtime: nvidia
 
+    # When fronting CinaCue with Traefik, route by hostname instead of a host
+    # port. You can drop the ports mapping below; keep it only if you also want
+    # direct LAN access at http://<unraid-ip>:8090/.
     ports:
       # host:container — browse at http://<unraid-ip>:8090/  (admin at /admin)
       - "8090:8000"
+
+    # --- Traefik reverse-proxy labels --------------------------------------
+    # Requires an external Traefik network (default name "proxy"; see the
+    # networks: block at the bottom). Override any of these in your .env:
+    #   CINACUE_HOST=cinacue.mmagtech.com
+    #   TRAEFIK_ENTRYPOINT=websecure                     # your HTTPS entrypoint
+    #   TRAEFIK_CERTRESOLVER=cloudflare                  # your ACME resolver
+    #   TRAEFIK_MIDDLEWARES=traefik-real-ip@file,geoblock@file,crowdsec@file,rate-limit@file,noindex@file,security-headers@file
+    #   TRAEFIK_NETWORK=proxy
+    # Also set SESSION_COOKIE_SECURE=true in .env when served over HTTPS.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-proxy}"
+      # Router: match requests for your hostname on the HTTPS entrypoint.
+      - "traefik.http.routers.cinacue.rule=Host(`${CINACUE_HOST:-cinacue.mmagtech.com}`)"
+      - "traefik.http.routers.cinacue.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.cinacue.tls=true"
+      - "traefik.http.routers.cinacue.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      # Standard file-provider middleware chain (matches the other stacks).
+      # Verified safe for CinaCue's browser HLS player:
+      #   - rate-limit@file: 200 req/s avg / 300 burst per client IP — HLS uses
+      #     ~1-2 req/s per viewer, so no throttling of playback.
+      #   - security-headers@file: no CSP and no frameDeny, so it neither blocks
+      #     the hls.js player nor iframe embedding (Organizr/Homarr).
+      - "traefik.http.routers.cinacue.middlewares=${TRAEFIK_MIDDLEWARES:-traefik-real-ip@file,geoblock@file,crowdsec@file,rate-limit@file,noindex@file,security-headers@file}"
+      - "traefik.http.routers.cinacue.priority=100"
+      # Service: the container listens on 8000 (not the published host port).
+      - "traefik.http.services.cinacue.loadbalancer.server.port=8000"
+      # Flush the proxy buffer promptly so HLS segments/playlists reach clients
+      # without added latency (matches the streaming-app convention).
+      - "traefik.http.services.cinacue.loadbalancer.responseForwarding.flushInterval=1s"
+      - "com.docker.compose.project=cinacue"
+      - "com.docker.compose.service=cinacue"
 
     environment:
       TZ: ${TZ:-America/New_York}
@@ -71,6 +107,10 @@ services:
       CONFIG_DIR: /config
       STREAM_DIR: /stream
 
+    # Join the shared Traefik network so the proxy can reach this container.
+    networks:
+      - proxy
+
     volumes:
       # Persistent appdata: SQLite DB, app secret, admin password hash.
       - /mnt/user/appdata/cinacue:/config
@@ -92,15 +132,14 @@ services:
               count: all
               capabilities: [gpu, compute, video, utility]
 
-# --- Optional reverse proxy -------------------------------------------------
-# If you front CinaCue with SWAG/NGINX Proxy Manager on a shared Docker
-# network, uncomment the two `networks:` blocks below and set
-# SESSION_COOKIE_SECURE=true in your .env. Then you can drop the `ports:`
-# mapping above and route by hostname instead.
-#
-#     networks:
-#       - proxy
-#
-# networks:
-#   proxy:
-#     external: true
+# --- Reverse proxy network --------------------------------------------------
+# The Traefik labels above route by hostname over this shared network. It must
+# already exist and be the same network Traefik itself is attached to. Create
+# it once on the host if needed:
+#     docker network create proxy
+# If your Traefik network has a different name, change it here and set
+# TRAEFIK_NETWORK in your .env to match.
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-proxy}
