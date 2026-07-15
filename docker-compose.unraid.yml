@@ -56,7 +56,11 @@ services:
       # --- Behaviour / security ---
       # Set true when served through an HTTPS reverse proxy.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # Arm the channel on startup so it idles during schedule gaps and wakes
+      # for scheduled movies on its own (Stop still overrides). Recommended true.
       CHANNEL_AUTO_START: ${CHANNEL_AUTO_START:-false}
+      # Warm ffmpeg up this many seconds before each movie's start (0 = off).
+      CHANNEL_PREROLL_SECONDS: ${CHANNEL_PREROLL_SECONDS:-30}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # NVIDIA plumbing. Pin NVIDIA_VISIBLE_DEVICES to a specific GPU UUID

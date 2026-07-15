@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # When true, the channel auto-enables on startup (resumes streaming from the
     # schedule after a restart). When false, the admin must press Start.
     channel_auto_start: bool = False
+    # Warm ffmpeg up this many seconds before a movie's scheduled start so the
+    # HLS playlist and first segments exist by air time (viewers get instant
+    # playback instead of a cold-start spinner). Set 0 to disable pre-roll.
+    channel_preroll_seconds: int = 30
 
     # --- Server / logging ---------------------------------------------------
     host: str = "0.0.0.0"

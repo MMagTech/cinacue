@@ -19,6 +19,7 @@ from typing import Optional
 from sqlmodel import Session
 
 from . import scheduler as sched
+from .config import settings
 from .database import engine, get_settings_row
 from .models import ScheduledMovie
 from .stream_manager import StreamManager, StreamState, _utcnow
@@ -92,7 +93,11 @@ class ChannelController:
             return
         with Session(engine) as session:
             row = get_settings_row(session)
-            active = sched.active_movie(session)
+            # Include movies within the pre-roll window so ffmpeg warms up and
+            # has segments ready before air time.
+            active = sched.active_or_imminent_movie(
+                session, settings.channel_preroll_seconds
+            )
             mgr = self.manager
 
             if active is None:

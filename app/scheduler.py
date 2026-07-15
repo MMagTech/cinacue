@@ -80,6 +80,29 @@ def active_movie(
     return session.exec(stmt).first()
 
 
+def active_or_imminent_movie(
+    session: Session,
+    preroll_seconds: int = 0,
+    now: Optional[datetime] = None,
+) -> Optional[ScheduledMovie]:
+    """The movie to have ffmpeg running for right now, including pre-roll.
+
+    Like :func:`active_movie` but also returns a movie whose start is at most
+    ``preroll_seconds`` in the future, so the encoder can warm up before air
+    time. The playback offset is clamped to 0 for a not-yet-started movie by
+    :func:`playback_offset_seconds`, so pre-roll simply begins the film at 0.
+    """
+    now = now or utcnow()
+    horizon = now + timedelta(seconds=max(0, preroll_seconds))
+    stmt = (
+        select(ScheduledMovie)
+        .where(ScheduledMovie.scheduled_start <= horizon)
+        .where(ScheduledMovie.scheduled_end > now)
+        .order_by(ScheduledMovie.scheduled_start)
+    )
+    return session.exec(stmt).first()
+
+
 def next_movie(
     session: Session, now: Optional[datetime] = None
 ) -> Optional[ScheduledMovie]:
