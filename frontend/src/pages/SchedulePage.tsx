@@ -12,7 +12,6 @@ import { searchPlex, PlexMovie } from "../plexApi";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// minutes-from-midnight -> "8:00 PM"
 function fmtTime(min: number): string {
   const t = ((min % 1440) + 1440) % 1440;
   let h = Math.floor(t / 60);
@@ -22,25 +21,17 @@ function fmtTime(min: number): string {
   if (h === 0) h = 12;
   return `${h}:${String(m).padStart(2, "0")} ${ampm}`;
 }
-
-// minutes -> "HH:MM" for a <input type="time">
 function toInput(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 }
-
-// "HH:MM" -> minutes
 function fromInput(v: string): number {
   const [h, m] = v.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 }
-
 function endLabel(m: ScheduledMovie): string {
   const end = m.start_minute + Math.round(m.runtime_ms / 60000);
   return fmtTime(end) + (end >= 1440 ? " (next day)" : "");
 }
-
 function errText(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 409) return "That time overlaps another movie in the lineup.";
@@ -76,7 +67,7 @@ export default function SchedulePage() {
   };
 
   useEffect(() => {
-    reload().catch(() => setError("Could not load schedule."));
+    reload().catch(() => setError("Could not load the schedule."));
   }, []);
 
   const toggleDay = async (d: number) => {
@@ -85,8 +76,7 @@ export default function SchedulePage() {
       ? activeDays.filter((x) => x !== d)
       : [...activeDays, d].sort((a, b) => a - b);
     try {
-      const r = await setActiveDays(next);
-      setActiveDaysState(r.active_days);
+      setActiveDaysState((await setActiveDays(next)).active_days);
     } catch (err) {
       setError(errText(err));
     }
@@ -150,21 +140,19 @@ export default function SchedulePage() {
   };
 
   return (
-    <div>
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <strong>On-air days</strong>
-        <div className="now-meta" style={{ margin: "4px 0 10px" }}>
-          Days that are off show nothing — the channel goes off air.
-        </div>
+    <>
+      <div className="card">
+        <div className="eyebrow">On-Air Days <span className="muted">Days that are off show nothing — the channel goes off air</span></div>
         <div className="days">
           {WEEKDAYS.map((label, d) => (
             <button
               key={d}
-              className={`day ${activeDays.includes(d) ? "active" : ""}`}
+              className={`day ${activeDays.includes(d) ? "on" : "off"}`}
               onClick={() => toggleDay(d)}
               title={activeDays.includes(d) ? "On air — click to turn off" : "Off air — click to turn on"}
             >
-              {label}
+              <span className="bulb" />
+              <span className="dn">{label}</span>
             </button>
           ))}
         </div>
@@ -172,159 +160,83 @@ export default function SchedulePage() {
 
       {error && <div className="error">{error}</div>}
 
-      <div className="panel">
-        <div className="topbar" style={{ marginBottom: 8 }}>
-          <strong>Daily lineup ({tz})</strong>
-          {!adding && (
-            <button className="btn" onClick={openAdd}>
-              + Add Movie
-            </button>
-          )}
+      <div>
+        <div className="eyebrow">
+          Daily Lineup <span className="muted">· {tz}</span>
+          {!adding && <button className="btn btn-sm" onClick={openAdd}>+ Add Movie</button>}
         </div>
 
         {adding && (
-          <div className="panel" style={{ marginBottom: 16 }}>
-            <form onSubmit={runSearch}>
-              <label>Search the Plex library</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="e.g. Ghostbusters"
-                  autoFocus
-                />
-                <button className="btn" type="submit" disabled={searching || !q.trim()}>
-                  {searching ? "…" : "Search"}
-                </button>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => setAdding(false)}
-                >
-                  Cancel
-                </button>
-              </div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <form onSubmit={runSearch} className="search-row">
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Plex library…" autoFocus />
+              <button className="btn" type="submit" disabled={searching || !q.trim()}>{searching ? "…" : "Search"}</button>
+              <button type="button" className="btn ghost" onClick={() => setAdding(false)}>Cancel</button>
             </form>
 
-            <div style={{ display: "grid", gap: 8, margin: "12px 0" }}>
+            <div style={{ display: "grid", gap: 8, margin: "14px 0" }}>
               {results.map((m) => (
                 <div
                   key={m.rating_key}
-                  className="choice"
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    borderColor:
-                      chosen?.rating_key === m.rating_key ? "var(--accent)" : undefined,
-                  }}
+                  className={`result ${chosen?.rating_key === m.rating_key ? "sel" : ""}`}
                   onClick={() => setChosen(m)}
                 >
-                  <span>
-                    {m.title}
-                    {m.year ? ` (${m.year})` : ""}
-                  </span>
-                  <span className="now-meta">
-                    {m.runtime_minutes} min
-                    {m.source_available ? "" : " · file missing"}
-                  </span>
+                  <span>{m.title}{m.year ? ` (${m.year})` : ""}</span>
+                  <span className="muted">{m.runtime_minutes} min{m.source_available ? "" : " · file missing"}</span>
                 </div>
               ))}
             </div>
 
             {chosen && (
               <div>
-                <label>Daily start time (channel time, {tz})</label>
-                <input
-                  type="time"
-                  value={startInput}
-                  onChange={(e) => setStartInput(e.target.value)}
-                />
+                <span className="flabel">Daily Start Time · {tz}</span>
+                <input type="time" value={startInput} onChange={(e) => setStartInput(e.target.value)} style={{ maxWidth: 160 }} />
                 {!chosen.source_available && (
                   <div className="error" style={{ marginTop: 8 }}>
-                    Source file not found on the mount — check the movie path
-                    mapping before scheduling this title.
+                    Source file not found on the mount — check the movie path mapping before scheduling this title.
                   </div>
                 )}
-                <div style={{ marginTop: 12 }}>
-                  <button
-                    className="btn"
-                    onClick={saveAdd}
-                    disabled={!chosen.source_available}
-                    title={
-                      chosen.source_available
-                        ? "Add to the daily lineup"
-                        : "The source file must be reachable first"
-                    }
-                  >
-                    Add “{chosen.title}”
-                  </button>
+                <div style={{ marginTop: 14 }}>
+                  <button className="btn" onClick={saveAdd} disabled={!chosen.source_available}>Add “{chosen.title}”</button>
                 </div>
               </div>
             )}
-
             {addError && <div className="error">{addError}</div>}
           </div>
         )}
 
         {movies.length === 0 ? (
-          <div className="empty">No movies in the daily lineup yet.</div>
+          <div className="card empty">No movies in the daily lineup yet.</div>
         ) : (
-          movies.map((m) => (
-            <div className="slot" key={m.id}>
-              <div style={{ flex: 1 }}>
-                <div>
-                  <strong>{m.title}</strong>
-                  {m.year ? ` (${m.year})` : ""}
-                </div>
-                <div className="now-meta">
-                  {fmtTime(m.start_minute)} – {endLabel(m)}
-                </div>
-
-                {editingId === m.id && (
-                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <input
-                      type="time"
-                      value={editInput}
-                      onChange={(e) => setEditInput(e.target.value)}
-                      style={{ maxWidth: 160 }}
-                    />
-                    <button className="btn" onClick={() => saveEdit(m.id)}>
-                      Save
-                    </button>
-                    <button
-                      className="btn secondary"
-                      onClick={() => setEditingId(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
+          <div className="lineup">
+            {movies.map((m) => (
+              <div className="slot" key={m.id}>
+                <span className="st">{fmtTime(m.start_minute)}</span>
+                <span className="thumb" style={m.poster_url ? { backgroundImage: `url(${m.poster_url})` } : undefined} />
+                <span className="name">
+                  {m.title}{m.year ? ` (${m.year})` : ""}
+                  <span className="sub">Ends {endLabel(m)}</span>
+                  {editingId === m.id && (
+                    <span style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <input type="time" value={editInput} onChange={(e) => setEditInput(e.target.value)} style={{ maxWidth: 140 }} />
+                      <button className="btn btn-sm" onClick={() => saveEdit(m.id)}>Save</button>
+                      <button className="btn ghost btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
+                    </span>
+                  )}
+                </span>
+                <span className="act">
+                  <button className="chip" onClick={() => { setEditingId(m.id); setEditInput(toInput(m.start_minute)); }}>Edit</button>
+                  <button className="chip" onClick={() => remove(m.id)}>Remove</button>
+                </span>
               </div>
-
-              <div className="pill-row">
-                <button
-                  className="choice"
-                  onClick={() => {
-                    setEditingId(m.id);
-                    setEditInput(toInput(m.start_minute));
-                  }}
-                >
-                  Edit Time
-                </button>
-                <button className="choice" onClick={() => remove(m.id)}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
-      </div>
 
-      <div className="note">
-        The lineup repeats every on-air day. Overlapping movies are rejected —
-        a movie that starts late may run past midnight. Times are the channel's
-        configured timezone ({tz}).
+        <div className="note">
+          The lineup repeats every on-air day. Overlapping movies are rejected — a movie that starts late may run past midnight. Times are the channel's timezone ({tz}).
+        </div>
       </div>
-    </div>
+    </>
   );
 }

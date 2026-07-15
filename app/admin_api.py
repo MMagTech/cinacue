@@ -328,7 +328,10 @@ def _to_out(m) -> ScheduledMovieOut:
 
 
 # --- Channel control & diagnostics (Milestone 5) ---------------------------
-from .stream_runtime import controller, manager  # noqa: E402
+import time  # noqa: E402
+
+from . import gpu  # noqa: E402
+from .stream_runtime import app_started_at, controller, manager  # noqa: E402
 
 
 def _channel_payload(session: Session) -> dict:
@@ -338,6 +341,10 @@ def _channel_payload(session: Session) -> dict:
     mask = row.active_days_mask
     st = manager.status()
     st["enabled"] = controller.enabled
+    st["uptime_seconds"] = int(time.time() - app_started_at)
+    gpu_stats = gpu.gpu_stats()
+    st["gpu_name"] = gpu_stats["name"]
+    st["gpu_encode_percent"] = gpu_stats["encode_percent"]
     active = scheduler.active_movie(session)
     if active is not None:
         bounds = scheduler.occurrence_bounds(active, tz, mask)

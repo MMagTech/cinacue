@@ -19,8 +19,8 @@ export default function AdminApp() {
 
   if (authed === null) {
     return (
-      <div className="container">
-        <div className="brand">Movie Channel — Admin</div>
+      <div className="login-wrap">
+        <span className="wordmark">CINA<b>CUE</b></span>
       </div>
     );
   }
@@ -45,29 +45,29 @@ export default function AdminApp() {
   ];
 
   return (
-    <div className="container">
-      <div className="topbar">
-        <div className="brand">Movie Channel — Admin</div>
-        <button className="btn secondary" onClick={doLogout}>
-          Log out
-        </button>
+    <div className="admin">
+      <div className="admin-top">
+        <span className="wordmark">CINA<b>CUE</b> <span className="sub">· Admin</span></span>
+        <nav className="nav">
+          {tabs.map(([key, label]) => (
+            <button
+              key={key}
+              className={tab === key ? "on" : ""}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <span className="spacer" />
+        <button className="btn ghost btn-sm" onClick={doLogout}>Log Out</button>
       </div>
 
-      <div className="tabs">
-        {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            className={`tab ${tab === key ? "active" : ""}`}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="admin-body">
+        {tab === "dashboard" && <DashboardPage />}
+        {tab === "schedule" && <SchedulePage />}
+        {tab === "encoding" && <EncodingPage />}
       </div>
-
-      {tab === "dashboard" && <DashboardPage />}
-      {tab === "schedule" && <SchedulePage />}
-      {tab === "encoding" && <EncodingPage />}
     </div>
   );
 }
