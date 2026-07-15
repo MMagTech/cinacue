@@ -269,6 +269,9 @@ a { color: var(--gold); }
 .btn-sm { padding: 6px 11px; font-size: 10.5px; }
 .chip { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; background: transparent; cursor: pointer; }
 .chip:hover { border-color: var(--line-2); color: var(--ink-dim); }
+.chip.cc { font-weight: 700; letter-spacing: 0.5px; }
+.chip.cc.on { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+.chip.cc.on:hover { color: var(--bg); }
 
 input[type="text"], input[type="password"], input[type="time"], input[type="search"], select {
   width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);

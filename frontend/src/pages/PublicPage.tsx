@@ -66,27 +66,84 @@ function TopBar({ live, tz }: { live: boolean; tz: string }) {
 function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; runtimeSeconds: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
   const [chrome, setChrome] = useState(true);
   const [muted, setMuted] = useState(true);
+  const [subsAvailable, setSubsAvailable] = useState(false);
+  const [subsOn, setSubsOn] = useState(() => {
+    try {
+      return localStorage.getItem("cc_subs") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let hls: Hls | null = null;
-    if (Hls.isSupported()) {
-      hls = new Hls({
-        liveSyncDurationCount: 3,
-        enableWorker: true,
-        backBufferLength: 15,
-        maxBufferLength: 15,
-        maxBufferSize: 20 * 1000 * 1000,
-      });
-      hls.loadSource(STREAM_URL);
-      hls.attachMedia(video);
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = STREAM_URL;
-    }
+    let destroyed = false;
+    let reloadTimer: number | undefined;
+    // Movie transitions wipe and regenerate the playlist, and captions coming
+    // and going switch it between a plain media playlist and a master playlist.
+    // Native recovery handles the routine gaps; a full re-parse of the source
+    // is the fallback that re-detects the structure. This counter decides when
+    // to escalate, and is cleared once playback is healthy again.
+    let fatalCount = 0;
+
+    const teardown = () => {
+      const hls = hlsRef.current;
+      if (hls) {
+        hls.destroy();
+        hlsRef.current = null;
+      }
+    };
+
+    const init = () => {
+      if (destroyed) return;
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          liveSyncDurationCount: 3,
+          enableWorker: true,
+          backBufferLength: 15,
+          maxBufferLength: 15,
+          maxBufferSize: 20 * 1000 * 1000,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(STREAM_URL);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+          setSubsAvailable((hlsRef.current?.subtitleTracks?.length ?? 0) > 0);
+        });
+        hls.on(Hls.Events.FRAG_BUFFERED, () => {
+          fatalCount = 0;
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          fatalCount += 1;
+          if (fatalCount <= 2 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hlsRef.current?.startLoad();
+            return;
+          }
+          if (fatalCount <= 2 && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hlsRef.current?.recoverMediaError();
+            return;
+          }
+          // Persistent failure or a media/master structure change: re-parse
+          // the source from scratch after a short beat.
+          teardown();
+          setSubsAvailable(false);
+          reloadTimer = window.setTimeout(init, 1200);
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = STREAM_URL;
+        video.addEventListener("loadedmetadata", () => {
+          setSubsAvailable(video.textTracks.length > 0);
+        });
+      }
+    };
+
+    init();
     const preventSeek = () => {
       if (video.seekable.length > 0) {
         const edge = video.seekable.end(video.seekable.length - 1);
@@ -95,10 +152,33 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
     };
     video.addEventListener("seeking", preventSeek);
     return () => {
+      destroyed = true;
+      window.clearTimeout(reloadTimer);
       video.removeEventListener("seeking", preventSeek);
-      if (hls) hls.destroy();
+      teardown();
     };
   }, []);
+
+  // Apply the caption preference whenever it changes, or when a new stream
+  // reports whether captions are available. Default off so they never surprise.
+  useEffect(() => {
+    try {
+      localStorage.setItem("cc_subs", subsOn ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+    const hls = hlsRef.current;
+    const video = videoRef.current;
+    if (hls) {
+      const on = subsOn && (hls.subtitleTracks?.length ?? 0) > 0;
+      hls.subtitleDisplay = on;
+      hls.subtitleTrack = on ? 0 : -1;
+    } else if (video) {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        video.textTracks[i].mode = subsOn ? "showing" : "hidden";
+      }
+    }
+  }, [subsOn, subsAvailable]);
 
   // Auto-hide the overlay after inactivity; reveal on pointer/touch.
   const wake = useCallback(() => {
@@ -117,6 +197,7 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
     v.muted = !v.muted;
     setMuted(v.muted);
   };
+  const toggleSubs = () => setSubsOn((v) => !v);
   const fullscreen = () => {
     const el = wrapRef.current;
     if (!el) return;
@@ -145,6 +226,17 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
           <button className="chip" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute" : "Mute"}>
             <span aria-hidden="true">{muted ? "🔇" : "🔊"}</span>
           </button>
+          {subsAvailable && (
+            <button
+              className={`chip cc${subsOn ? " on" : ""}`}
+              onClick={toggleSubs}
+              aria-label={subsOn ? "Turn Off Subtitles" : "Turn On Subtitles"}
+              aria-pressed={subsOn}
+              title={subsOn ? "Subtitles On" : "Subtitles Off"}
+            >
+              <span aria-hidden="true">CC</span>
+            </button>
+          )}
           <span className="time">{fmtDur(progressSeconds)}</span>
           <div className="bar"><i style={{ width: `${pct}%` }} /></div>
           <span className="time">{fmtDur(runtimeSeconds)}</span>

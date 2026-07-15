@@ -109,6 +109,7 @@ def build_ffmpeg_args(
     segment_pattern: Optional[str] = None,
     hls_segment_seconds: int = 4,
     is_hdr: bool = False,
+    subtitle_path: Optional[str] = None,
     ffmpeg_bin: str = "ffmpeg",
 ) -> List[str]:
     """Build the FFmpeg argument list for a live HLS stream.
@@ -116,6 +117,11 @@ def build_ffmpeg_args(
     Returned as a list so it can be passed straight to ``subprocess`` without a
     shell, preventing command injection. Hardware decode is only requested for
     NVENC encoders; software encoders (used in tests) omit it.
+
+    When ``subtitle_path`` is given (an external SRT sidecar), it is muxed in as
+    a WebVTT subtitle rendition and the output becomes a multivariant (master)
+    playlist so players can toggle captions per-viewer. Without it, the output
+    is the original single media playlist, byte-for-byte unchanged.
     """
     seg_pattern = segment_pattern or "segment-%06d.ts"
     # Fallback GOP cap. The authoritative keyframe placement is -force_key_frames
@@ -127,6 +133,7 @@ def build_ffmpeg_args(
 
     # HDR only matters when the GPU encoder is in play (tonemap runs on the card).
     hdr = hardware and is_hdr
+    subtitles = bool(subtitle_path)
 
     args: List[str] = [ffmpeg_bin, "-hide_banner", "-y"]
 
@@ -147,6 +154,19 @@ def build_ffmpeg_args(
         args += ["-ss", f"{start_offset_seconds:.3f}"]
 
     args += ["-i", source_path]
+
+    if subtitles:
+        # External subtitle as a second input. Input-seek it by the same offset
+        # as the video so its cue timing stays aligned: an input seek restarts
+        # both streams' timestamps at zero, so seeking only the video would
+        # leave the captions running ahead by ``start_offset_seconds``.
+        if start_offset_seconds > 0:
+            args += ["-ss", f"{start_offset_seconds:.3f}"]
+        args += ["-i", subtitle_path]
+        # With a second input, ffmpeg's default stream selection is ambiguous;
+        # map the video + audio from the movie and the subtitle from the sidecar
+        # explicitly (this also skips any embedded subtitle tracks in the movie).
+        args += ["-map", "0:v:0", "-map", "0:a:0", "-map", "1:s:0"]
 
     if hdr:
         # HDR -> SDR entirely on the GPU: tonemap first (in high bit depth,
@@ -184,6 +204,9 @@ def build_ffmpeg_args(
 
     args += ["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k", "-ac", "2"]
 
+    if subtitles:
+        args += ["-c:s", "webvtt"]
+
     args += [
         "-f",
         "hls",
@@ -193,10 +216,24 @@ def build_ffmpeg_args(
         "6",
         "-hls_flags",
         "delete_segments+independent_segments+append_list",
-        "-hls_segment_filename",
-        seg_pattern,
-        output_playlist,
     ]
+
+    if subtitles:
+        # Multivariant playlist: the master keeps the original playlist name so
+        # the player URL never changes, and the video/audio + subtitle variants
+        # live beside it (v0.m3u8 / v0_vtt.m3u8, segments v0*.ts / v0*.vtt).
+        sep = output_playlist.rfind("/")
+        master_name = output_playlist[sep + 1 :] if sep >= 0 else output_playlist
+        stream_dir = output_playlist[:sep] if sep >= 0 else "."
+        args += [
+            "-master_pl_name",
+            master_name,
+            "-var_stream_map",
+            "v:0,a:0,s:0,sgroup:subs",
+            f"{stream_dir}/v%v.m3u8",
+        ]
+    else:
+        args += ["-hls_segment_filename", seg_pattern, output_playlist]
 
     return args
 

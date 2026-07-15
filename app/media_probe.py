@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import subprocess
@@ -18,6 +19,46 @@ from typing import Optional
 def source_file_exists(path: str) -> bool:
     """True if the translated container path points at a readable file."""
     return bool(path) and os.path.isfile(path)
+
+
+def _strip_media_ext(path: str) -> str:
+    """Return ``path`` without its final extension (keeping the directory)."""
+    dot = path.rfind(".")
+    sep = max(path.rfind("/"), path.rfind("\\"))
+    return path[:dot] if dot > sep else path
+
+
+def find_sidecar_subtitle(source_path: str) -> Optional[str]:
+    """Locate an external English SRT sitting next to the movie file.
+
+    Preference order:
+      1. ``<stem>.en.srt`` / ``<stem>.eng.srt`` / ``<stem>.srt`` — exact basename
+         match (e.g. Bazarr writes ``<movie>.en.srt`` beside the video).
+      2. any ``*.en.srt`` / ``*.eng.srt`` / ``*.srt`` in the same folder — a
+         fallback for single-subtitle libraries.
+
+    Only external SRT sidecars are considered; embedded subtitle tracks are
+    intentionally ignored. Returns the container path, or ``None`` if absent.
+    """
+    if not source_path:
+        return None
+
+    stem = _strip_media_ext(source_path)
+    for suffix in (".en.srt", ".eng.srt", ".srt"):
+        candidate = stem + suffix
+        if os.path.isfile(candidate):
+            return candidate
+
+    folder = os.path.dirname(source_path)
+    if folder and os.path.isdir(folder):
+        # Real library folders contain [ ] { } which glob treats as character
+        # classes, so escape the directory but keep the filename pattern live.
+        safe_folder = glob.escape(folder)
+        for pattern in ("*.en.srt", "*.eng.srt", "*.srt"):
+            matches = sorted(glob.glob(os.path.join(safe_folder, pattern)))
+            if matches:
+                return matches[0]
+    return None
 
 
 def calculate_end_time(start: datetime, runtime_ms: int) -> datetime:

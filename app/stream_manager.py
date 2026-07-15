@@ -24,7 +24,7 @@ from typing import Deque, List, Optional, Tuple
 from . import encoding
 from .config import EncoderPreset, MaxResolution
 from .logging_config import get_logger
-from .media_probe import ProbeError, probe_source
+from .media_probe import ProbeError, find_sidecar_subtitle, probe_source
 
 log = get_logger("stream")
 
@@ -73,6 +73,7 @@ class StreamManager:
         self.output_dims: Optional[Tuple[int, int]] = None
         self.video_bitrate_kbps: Optional[int] = None
         self.encoder: Optional[str] = None
+        self.subtitles_available: bool = False
         self.started_at: Optional[datetime] = None
         self.start_offset_seconds: float = 0.0
         self.retry_count: int = 0
@@ -98,7 +99,7 @@ class StreamManager:
     # --- housekeeping -------------------------------------------------------
     def clean_stream_dir(self) -> None:
         self.stream_dir.mkdir(parents=True, exist_ok=True)
-        for pattern in ("*.ts", "*.m3u8"):
+        for pattern in ("*.ts", "*.m3u8", "*.vtt"):
             for f in self.stream_dir.glob(pattern):
                 try:
                     f.unlink()
@@ -192,6 +193,7 @@ class StreamManager:
         self.output_dims = None
         self.video_bitrate_kbps = None
         self.encoder = None
+        self.subtitles_available = False
         self.started_at = None
         self.start_offset_seconds = 0.0
 
@@ -230,11 +232,13 @@ class StreamManager:
             dims = encoding.calculate_output_dimensions(
                 probe.width, probe.height, maximum_resolution
             )
+            subtitle_path = find_sidecar_subtitle(source_path)
             self._log(
                 f"source {probe.width}x{probe.height} {probe.video_codec} -> "
                 f"output {dims.output_width}x{dims.output_height} "
                 f"({'no upscale' if dims.upscaled_blocked else 'scaled'})"
                 + (f" [HDR {probe.color_transfer} -> SDR tonemap]" if probe.is_hdr else "")
+                + (" [subtitles]" if subtitle_path else "")
             )
 
             self.clean_stream_dir()
@@ -249,6 +253,7 @@ class StreamManager:
                 start_offset_seconds=offset_seconds,
                 segment_pattern=str(self.segment_pattern),
                 is_hdr=probe.is_hdr,
+                subtitle_path=subtitle_path,
                 ffmpeg_bin=self.ffmpeg_bin,
             )
 
@@ -275,6 +280,7 @@ class StreamManager:
             self.output_dims = (dims.output_width, dims.output_height)
             self.video_bitrate_kbps = video_bitrate_kbps
             self.encoder = encoder
+            self.subtitles_available = subtitle_path is not None
             self.started_at = _utcnow()
             self.start_offset_seconds = offset_seconds
             self._log(f"ffmpeg pid={self._proc.pid} running")
@@ -323,6 +329,7 @@ class StreamManager:
             ),
             "video_bitrate_kbps": self.video_bitrate_kbps,
             "encoder": self.encoder,
+            "subtitles_available": self.subtitles_available,
             "ffmpeg_pid": self.ffmpeg_pid,
             "ffmpeg_alive": self.is_process_alive(),
             "start_offset_seconds": int(self.start_offset_seconds),

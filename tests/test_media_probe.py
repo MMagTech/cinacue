@@ -1,7 +1,7 @@
 """Tests for ffprobe JSON parsing (pure) and end-time calc."""
 from __future__ import annotations
 
-from app.media_probe import parse_ffprobe
+from app.media_probe import find_sidecar_subtitle, parse_ffprobe
 
 FFPROBE_JSON = {
     "streams": [
@@ -67,3 +67,45 @@ def test_parse_ffprobe_sdr_is_not_hdr():
     assert r.is_hdr is False
     # No color_transfer at all is also treated as SDR.
     assert parse_ffprobe(FFPROBE_JSON).is_hdr is False
+
+
+def test_find_sidecar_subtitle_exact_en(tmp_path):
+    movie = tmp_path / "Movie (2020).mkv"
+    movie.write_text("x")
+    srt = tmp_path / "Movie (2020).en.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    assert find_sidecar_subtitle(str(movie)) == str(srt)
+
+
+def test_find_sidecar_subtitle_brackets_in_name(tmp_path):
+    # Real library names contain [ ] { } which must not be parsed as globs.
+    folder = tmp_path / "Movie (2026) {tmdb-1} [MA][WEBDL-1080p]"
+    folder.mkdir()
+    movie = folder / "Movie (2026) {tmdb-1} [MA][WEBDL-1080p]-HONE.mkv"
+    movie.write_text("x")
+    srt = folder / "Movie (2026) {tmdb-1} [MA][WEBDL-1080p]-HONE.en.srt"
+    srt.write_text("x")
+    assert find_sidecar_subtitle(str(movie)) == str(srt)
+
+
+def test_find_sidecar_subtitle_plain_srt_fallback(tmp_path):
+    movie = tmp_path / "Movie.mkv"
+    movie.write_text("x")
+    srt = tmp_path / "Movie.srt"
+    srt.write_text("x")
+    assert find_sidecar_subtitle(str(movie)) == str(srt)
+
+
+def test_find_sidecar_subtitle_none_when_absent(tmp_path):
+    movie = tmp_path / "Movie.mkv"
+    movie.write_text("x")
+    assert find_sidecar_subtitle(str(movie)) is None
+
+
+def test_find_sidecar_subtitle_prefers_en_over_plain(tmp_path):
+    movie = tmp_path / "Movie.mkv"
+    movie.write_text("x")
+    (tmp_path / "Movie.srt").write_text("x")
+    en = tmp_path / "Movie.en.srt"
+    en.write_text("x")
+    assert find_sidecar_subtitle(str(movie)) == str(en)

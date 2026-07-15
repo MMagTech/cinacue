@@ -120,3 +120,61 @@ def test_software_encoder_ignores_hdr():
     assert "tonemap_cuda" not in " ".join(args)
     assert "-hwaccel_output_format" not in args
     assert "-pix_fmt" in args
+
+
+def _subtitle_args(*, offset: float = 0.0, encoder: str = "h264_nvenc", is_hdr: bool = False):
+    dims = calculate_output_dimensions(1920, 1080, MaxResolution.p1080)
+    return build_ffmpeg_args(
+        source_path="/media/movies/Movie (2020)/movie.mkv",
+        output_playlist="/stream/channel.m3u8",
+        dims=dims,
+        video_bitrate_kbps=4000,
+        audio_bitrate_kbps=160,
+        encoder=encoder,
+        start_offset_seconds=offset,
+        segment_pattern="/stream/segment-%06d.ts",
+        subtitle_path="/media/movies/Movie (2020)/movie.en.srt",
+        is_hdr=is_hdr,
+    )
+
+
+def test_subtitle_adds_webvtt_rendition():
+    args = _subtitle_args()
+    # The sidecar is a second input.
+    assert args.count("-i") == 2
+    assert "/media/movies/Movie (2020)/movie.en.srt" in args
+    # Explicit maps: movie video + audio, sidecar subtitle (skips embedded subs).
+    assert "0:v:0" in args and "0:a:0" in args and "1:s:0" in args
+    # Subtitle encoded to WebVTT.
+    assert args[args.index("-c:s") + 1] == "webvtt"
+    # Multivariant playlist with a subtitle group; master keeps the stable name.
+    assert "sgroup:subs" in args[args.index("-var_stream_map") + 1]
+    assert args[args.index("-master_pl_name") + 1] == "channel.m3u8"
+    # The single-playlist segment flag is not used in multivariant mode.
+    assert "-hls_segment_filename" not in args
+
+
+def test_subtitle_offset_seeks_both_inputs():
+    # Both the video and the sidecar are input-seeked by the offset so the
+    # captions stay aligned with the video (which restarts its clock at 0).
+    args = _subtitle_args(offset=600)
+    ss_values = [args[i + 1] for i, a in enumerate(args) if a == "-ss"]
+    assert ss_values == ["600.000", "600.000"]
+
+
+def test_subtitle_with_hdr_keeps_tonemap_and_captions():
+    args = _subtitle_args(is_hdr=True)
+    assert "tonemap_cuda" in args[args.index("-vf") + 1]
+    assert "-var_stream_map" in args
+    assert "1:s:0" in args
+
+
+def test_no_subtitle_keeps_single_media_playlist():
+    # Without a sidecar the output is byte-for-byte the original single playlist.
+    args = _args()
+    assert "-var_stream_map" not in args
+    assert "-master_pl_name" not in args
+    assert "-c:s" not in args
+    assert "-map" not in args
+    assert "-hls_segment_filename" in args
+    assert args[-1] == "/stream/channel.m3u8"
