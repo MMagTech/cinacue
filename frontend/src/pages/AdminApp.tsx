@@ -4,9 +4,8 @@ import AdminLogin from "./AdminLogin";
 import DashboardPage from "./DashboardPage";
 import SchedulePage from "./SchedulePage";
 import EncodingPage from "./EncodingPage";
-import LibraryPicker from "./LibraryPicker";
 
-type Tab = "dashboard" | "schedule" | "library" | "encoding";
+type Tab = "dashboard" | "schedule" | "encoding";
 
 export default function AdminApp() {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -42,7 +41,6 @@ export default function AdminApp() {
   const tabs: [Tab, string][] = [
     ["dashboard", "Dashboard"],
     ["schedule", "Schedule"],
-    ["library", "Plex Library"],
     ["encoding", "Encoding"],
   ];
 
@@ -69,7 +67,6 @@ export default function AdminApp() {
 
       {tab === "dashboard" && <DashboardPage />}
       {tab === "schedule" && <SchedulePage />}
-      {tab === "library" && <LibraryPicker />}
       {tab === "encoding" && <EncodingPage />}
     </div>
   );

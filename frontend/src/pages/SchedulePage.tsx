@@ -239,8 +239,23 @@ export default function SchedulePage() {
                   value={startInput}
                   onChange={(e) => setStartInput(e.target.value)}
                 />
+                {!chosen.source_available && (
+                  <div className="error" style={{ marginTop: 8 }}>
+                    Source file not found on the mount — check the movie path
+                    mapping before scheduling this title.
+                  </div>
+                )}
                 <div style={{ marginTop: 12 }}>
-                  <button className="btn" onClick={saveAdd} disabled={!chosen}>
+                  <button
+                    className="btn"
+                    onClick={saveAdd}
+                    disabled={!chosen.source_available}
+                    title={
+                      chosen.source_available
+                        ? "Add to the daily lineup"
+                        : "The source file must be reachable first"
+                    }
+                  >
                     Add “{chosen.title}”
                   </button>
                 </div>
