@@ -207,7 +207,7 @@ CinaCue/
 │   ├── admin_api.py         /api/admin/* (auth + CSRF)
 │   └── static/              compiled frontend (npm run build)
 ├── frontend/src/pages/      Public, AdminApp, AdminLogin, Dashboard, Schedule, Encoding
-├── assets/                  Unraid container icons (amber + monochrome)
+├── assets/                  Unraid container icons (default: icon-mono-white.png)
 ├── docker-compose.unraid.yml   prebuilt GHCR image + Traefik (production)
 ├── docker-compose.local.yml    desktop/dev (software encoder)
 ├── Dockerfile               CUDA + FFmpeg/NVENC, Node build stage, gosu, healthcheck

@@ -45,6 +45,8 @@ services:
     #   TRAEFIK_NETWORK=proxy
     # Also set SESSION_COOKIE_SECURE=true in .env when served over HTTPS.
     labels:
+      # Container icon shown in the Unraid Docker tab (raw GitHub URL).
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/MMagTech/cinacue/main/assets/icon-mono-white.png"
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-proxy}"
       # Router: match requests for your hostname on the HTTPS entrypoint.
