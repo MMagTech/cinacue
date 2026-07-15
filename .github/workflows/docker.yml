@@ -57,3 +57,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Publish a plain single-image manifest (no provenance attestation
+          # index) so the pulled digest matches the tag digest — this stops
+          # Unraid's false "update available" nag on :latest.
+          provenance: false
