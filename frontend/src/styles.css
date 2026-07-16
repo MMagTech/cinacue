@@ -154,6 +154,17 @@ a { color: var(--gold); }
 .standby-center .line { color: var(--ink-dim); font-size: 15px; margin: 0; }
 .standby-center .line b { color: var(--ink); }
 .standby-center .count { font-family: var(--mono); font-size: 13px; color: var(--gold); font-variant-numeric: tabular-nums; margin: 2px 0 0; }
+/* Standby stays on screen in fullscreen between movies, so scale it up to
+   match — the in-page sizes are lost on a whole TV. Separate rules per
+   pseudo-class: one unsupported selector would drop the whole list. */
+.player:fullscreen .standby-center { gap: 14px; }
+.player:fullscreen .standby-center h1 { font-size: clamp(34px, 5vw, 68px); }
+.player:fullscreen .standby-center .line { font-size: clamp(16px, 2vw, 28px); }
+.player:fullscreen .standby-center .count { font-size: clamp(14px, 1.6vw, 24px); }
+.player:-webkit-full-screen .standby-center { gap: 14px; }
+.player:-webkit-full-screen .standby-center h1 { font-size: clamp(34px, 5vw, 68px); }
+.player:-webkit-full-screen .standby-center .line { font-size: clamp(16px, 2vw, 28px); }
+.player:-webkit-full-screen .standby-center .count { font-size: clamp(14px, 1.6vw, 24px); }
 
 /* up-next rail */
 .rail-wrap { padding: 20px 22px 28px; }

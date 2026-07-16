@@ -63,7 +63,24 @@ function TopBar({ live, tz }: { live: boolean; tz: string }) {
   );
 }
 
-function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; runtimeSeconds: number }) {
+/** The screen itself — always mounted, on air or not.
+ *
+ * It owns the element that goes fullscreen, so it must survive a movie ending:
+ * if this element were unmounted between movies the browser would drop out of
+ * fullscreen. Instead the *contents* swap (video <-> standby card) and viewers
+ * stay fullscreen across the whole evening.
+ */
+function Player({
+  onAir,
+  progressSeconds,
+  runtimeSeconds,
+  standby,
+}: {
+  onAir: boolean;
+  progressSeconds: number;
+  runtimeSeconds: number;
+  standby: React.ReactNode;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -89,6 +106,9 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
   subsOnRef.current = subsOn;
 
   useEffect(() => {
+    // Off air there is no stream to attach to (and no <video> rendered), so
+    // stay idle; this re-runs and starts up when the next movie comes on.
+    if (!onAir) return;
     const video = videoRef.current;
     if (!video) return;
     let destroyed = false;
@@ -203,8 +223,9 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
       cancelAnimationFrame(raf);
       video.removeEventListener("seeking", preventSeek);
       teardown();
+      setSubsAvailable(false);
     };
-  }, []);
+  }, [onAir]);
 
   // Apply the caption preference whenever it changes, or when a new stream
   // reports whether captions are available. Default off so they never surprise.
@@ -261,45 +282,57 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
 
   return (
     <div
-      className={`player${chrome ? "" : " idle"}`}
+      className={`player${chrome ? "" : " idle"}${onAir ? "" : " standby"}`}
       ref={wrapRef}
       onMouseMove={wake}
       onTouchStart={wake}
       onClick={wake}
     >
-      <video ref={videoRef} autoPlay playsInline muted={muted} />
-      {subsOn && cueText && (
-        <div className={`cc-box${chrome ? " up" : ""}`}>{cueText}</div>
-      )}
-      {muted && (
-        <button className="sound-hint" onClick={toggleMute} aria-label="Turn on sound">
-          <span aria-hidden="true">🔊</span> Tap For Sound
-        </button>
-      )}
-      <div className={`player-overlay${chrome ? "" : " hidden"}`}>
-        <div className="progress" style={{ marginBottom: 12 }}>
-          <button className="chip" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute" : "Mute"}>
-            <span aria-hidden="true">{muted ? "🔇" : "🔊"}</span>
-          </button>
-          {subsAvailable && (
-            <button
-              className={`chip cc${subsOn ? " on" : ""}`}
-              onClick={toggleSubs}
-              aria-label={subsOn ? "Turn Off Subtitles" : "Turn On Subtitles"}
-              aria-pressed={subsOn}
-              title={subsOn ? "Subtitles On" : "Subtitles Off"}
-            >
-              <span aria-hidden="true">CC</span>
+      {onAir ? (
+        <>
+          <video ref={videoRef} autoPlay playsInline muted={muted} />
+          {subsOn && cueText && (
+            <div className={`cc-box${chrome ? " up" : ""}`}>{cueText}</div>
+          )}
+          {muted && (
+            <button className="sound-hint" onClick={toggleMute} aria-label="Turn on sound">
+              <span aria-hidden="true">🔊</span> Tap For Sound
             </button>
           )}
-          <span className="time">{fmtDur(progressSeconds)}</span>
-          <div className="bar"><i style={{ width: `${pct}%` }} /></div>
-          <span className="time">{fmtDur(runtimeSeconds)}</span>
-          <button className="chip" onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen">
-            <span aria-hidden="true">⛶</span>
-          </button>
-        </div>
-      </div>
+          <div className={`player-overlay${chrome ? "" : " hidden"}`}>
+            <div className="progress" style={{ marginBottom: 12 }}>
+              <button className="chip" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute" : "Mute"}>
+                <span aria-hidden="true">{muted ? "🔇" : "🔊"}</span>
+              </button>
+              {subsAvailable && (
+                <button
+                  className={`chip cc${subsOn ? " on" : ""}`}
+                  onClick={toggleSubs}
+                  aria-label={subsOn ? "Turn Off Subtitles" : "Turn On Subtitles"}
+                  aria-pressed={subsOn}
+                  title={subsOn ? "Subtitles On" : "Subtitles Off"}
+                >
+                  <span aria-hidden="true">CC</span>
+                </button>
+              )}
+              <span className="time">{fmtDur(progressSeconds)}</span>
+              <div className="bar"><i style={{ width: `${pct}%` }} /></div>
+              <span className="time">{fmtDur(runtimeSeconds)}</span>
+              <button className="chip" onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen">
+                <span aria-hidden="true">⛶</span>
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        // Off air: no controls — there is nothing to control. Esc still leaves
+        // fullscreen, and the next movie appears right here without the viewer
+        // having to do anything.
+        <>
+          <div className="still" />
+          <div className="standby-center">{standby}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -419,45 +452,46 @@ export default function PublicPage() {
     </div>
   );
 
+  const live = onAir && np !== null;
+
+  const standby = status?.next_up ? (
+    <>
+      <h1>Nothing On Right Now</h1>
+      <p className="line">Up Next — <b>{status.next_up.title}</b></p>
+      <p className="count">
+        {fmtOfDay(status.next_up.scheduled_start, tz)} · {countdown(status.next_up.scheduled_start)}
+      </p>
+    </>
+  ) : (
+    <>
+      <h1>Off Air</h1>
+      <p className="line">No Programming Scheduled</p>
+    </>
+  );
+
   return (
     <div className="viewer">
       <TopBar live={onAir} tz={tz} />
       <div className="stage">
-        {onAir && np ? (
-          <>
-            <Player progressSeconds={np.progress_seconds} runtimeSeconds={np.runtime_seconds} />
-            <div className="rail-wrap" style={{ paddingTop: 18 }}>
-              <div className="np-current" style={{ marginBottom: 4 }}>
-                <span className="np-k">Now Playing</span>
-              </div>
-              <h1 className="np-title" style={{ fontSize: 24, marginBottom: 4 }}>
-                {np.title}
-                {np.year ? <span>&nbsp;({np.year})</span> : null}
-              </h1>
-              <p className="np-tags">
-                {fmtOfDay(np.scheduled_start, tz)} – {fmtOfDay(np.scheduled_end, tz)}
-              </p>
+        {/* One screen, always mounted, so fullscreen survives a movie ending. */}
+        <Player
+          onAir={live}
+          progressSeconds={np?.progress_seconds ?? 0}
+          runtimeSeconds={np?.runtime_seconds ?? 0}
+          standby={standby}
+        />
+        {live && np && (
+          <div className="rail-wrap" style={{ paddingTop: 18 }}>
+            <div className="np-current" style={{ marginBottom: 4 }}>
+              <span className="np-k">Now Playing</span>
             </div>
-          </>
-        ) : (
-          <div className="player standby">
-            <div className="still" />
-            <div className="standby-center">
-              {status?.next_up ? (
-                <>
-                  <h1>Nothing On Right Now</h1>
-                  <p className="line">Up Next — <b>{status.next_up.title}</b></p>
-                  <p className="count">
-                    {fmtOfDay(status.next_up.scheduled_start, tz)} · {countdown(status.next_up.scheduled_start)}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h1>Off Air</h1>
-                  <p className="line">No Programming Scheduled</p>
-                </>
-              )}
-            </div>
+            <h1 className="np-title" style={{ fontSize: 24, marginBottom: 4 }}>
+              {np.title}
+              {np.year ? <span>&nbsp;({np.year})</span> : null}
+            </h1>
+            <p className="np-tags">
+              {fmtOfDay(np.scheduled_start, tz)} – {fmtOfDay(np.scheduled_end, tz)}
+            </p>
           </div>
         )}
         {rail}
