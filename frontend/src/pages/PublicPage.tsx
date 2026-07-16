@@ -93,7 +93,13 @@ function Player({
   const cuesRef = useRef<{ start: number; end: number; text: string }[]>([]);
   const subsOnRef = useRef(false);
   const [chrome, setChrome] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(() => {
+    try {
+      return localStorage.getItem("cc_sound") !== "1";
+    } catch {
+      return true;
+    }
+  });
   const [subsAvailable, setSubsAvailable] = useState(false);
   const [cueText, setCueText] = useState("");
   const [subsOn, setSubsOn] = useState(() => {
@@ -264,19 +270,63 @@ function Player({
     return () => window.clearTimeout(hideTimer.current);
   }, [wake]);
 
-  const toggleMute = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.muted = !v.muted;
-    setMuted(v.muted);
-  };
-  const toggleSubs = () => setSubsOn((v) => !v);
-  const fullscreen = () => {
+  // Sound is a preference, not a property of the current <video> — it can be set
+  // while off air (before a movie exists) and is remembered for next time.
+  const toggleMute = useCallback(() => setMuted((m) => !m), []);
+  const toggleSubs = useCallback(() => setSubsOn((v) => !v), []);
+  const fullscreen = useCallback(() => {
     const el = wrapRef.current;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else el.requestFullscreen?.().catch(() => {});
-  };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("cc_sound", muted ? "0" : "1");
+    } catch {
+      /* private mode */
+    }
+  }, [muted]);
+
+  // The <video> always *mounts* muted — that is what guarantees the browser lets
+  // it autoplay at all. Only once it is rolling do we apply the sound preference.
+  // Browsers refuse to unmute without a prior click, so if that is rejected we
+  // fall back to muted and the "Tap For Sound" prompt rather than a dead player.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!onAir || !v) return;
+    // Wait until it is actually playing: unmuting *before* autoplay starts gets
+    // the autoplay itself refused, which would leave a dead player instead of a
+    // silent one. Re-runs on every 'playing' (e.g. after a rebuffer) — harmless.
+    const apply = () => {
+      v.muted = muted;
+      if (!muted) v.play().catch(() => setMuted(true));
+    };
+    if (!v.paused) apply();
+    v.addEventListener("playing", apply);
+    return () => v.removeEventListener("playing", apply);
+  }, [muted, onAir]);
+
+  // Player keyboard shortcuts, the ones every video player uses. Ignored while
+  // typing, and modifier combos are left alone so Ctrl+F still finds text.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === "f") {
+        e.preventDefault();
+        fullscreen();
+      } else if (k === "m") {
+        e.preventDefault();
+        toggleMute();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen, toggleMute]);
 
   const pct = runtimeSeconds ? Math.min(100, (progressSeconds / runtimeSeconds) * 100) : 0;
 
@@ -290,7 +340,9 @@ function Player({
     >
       {onAir ? (
         <>
-          <video ref={videoRef} autoPlay playsInline muted={muted} />
+          {/* Always mounts muted so autoplay is never refused; the effect above
+              applies the sound preference once playback is actually running. */}
+          <video ref={videoRef} autoPlay playsInline muted />
           {subsOn && cueText && (
             <div className={`cc-box${chrome ? " up" : ""}`}>{cueText}</div>
           )}
@@ -325,12 +377,24 @@ function Player({
           </div>
         </>
       ) : (
-        // Off air: no controls — there is nothing to control. Esc still leaves
-        // fullscreen, and the next movie appears right here without the viewer
-        // having to do anything.
+        // Off air: only the two controls worth setting *before* a movie starts,
+        // in the same corners they occupy during playback so nothing jumps when
+        // it does. Setting either also gives the browser the click it needs to
+        // allow sound when the movie lands.
         <>
           <div className="still" />
           <div className="standby-center">{standby}</div>
+          <div className={`player-overlay${chrome ? "" : " hidden"}`}>
+            <div className="progress" style={{ marginBottom: 12 }}>
+              <button className="chip" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute" : "Mute"}>
+                <span aria-hidden="true">{muted ? "🔇" : "🔊"}</span>
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="chip" onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen">
+                <span aria-hidden="true">⛶</span>
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>
