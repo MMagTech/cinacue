@@ -261,7 +261,7 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
 
   return (
     <div
-      className="player"
+      className={`player${chrome ? "" : " idle"}`}
       ref={wrapRef}
       onMouseMove={wake}
       onTouchStart={wake}
