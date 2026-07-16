@@ -219,6 +219,13 @@ def build_ffmpeg_args(
     ]
 
     if subtitles:
+        # Start the MPEG-TS at PTS ~0. The WebVTT subtitle rendition carries no
+        # X-TIMESTAMP-MAP offset (its cues are anchored at 0), but the muxer's
+        # default initial delay pushes the video/audio start to ~1.5s — so
+        # without this the player lines caption-time 0 up with a frame that is
+        # really 1.5s in, and every caption shows ~1.5s early. Zeroing the mux
+        # delay brings the TS start to ~0.1s, aligning captions with the video.
+        args += ["-muxpreload", "0", "-muxdelay", "0"]
         # Multivariant playlist: the master keeps the original playlist name so
         # the player URL never changes, and the video/audio + subtitle variants
         # live beside it (v0.m3u8 / v0_vtt.m3u8, segments v0*.ts / v0*.vtt).

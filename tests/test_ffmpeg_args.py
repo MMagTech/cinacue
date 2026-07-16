@@ -152,6 +152,9 @@ def test_subtitle_adds_webvtt_rendition():
     assert args[args.index("-master_pl_name") + 1] == "channel.m3u8"
     # The single-playlist segment flag is not used in multivariant mode.
     assert "-hls_segment_filename" not in args
+    # TS starts at ~0 so WebVTT (anchored at 0) stays aligned with the video.
+    assert args[args.index("-muxpreload") + 1] == "0"
+    assert args[args.index("-muxdelay") + 1] == "0"
 
 
 def test_subtitle_offset_seeks_both_inputs():
@@ -176,5 +179,6 @@ def test_no_subtitle_keeps_single_media_playlist():
     assert "-master_pl_name" not in args
     assert "-c:s" not in args
     assert "-map" not in args
+    assert "-muxpreload" not in args
     assert "-hls_segment_filename" in args
     assert args[-1] == "/stream/channel.m3u8"

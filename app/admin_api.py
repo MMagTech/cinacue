@@ -398,8 +398,11 @@ def diagnostics(
     import os
     import shutil
 
+    from sqlmodel import select
+
     from . import encoding
     from .config import settings as app_settings
+    from .media_probe import source_file_exists
 
     row = get_settings_row(session)
 
@@ -410,8 +413,23 @@ def diagnostics(
         except Exception:
             plex_reachable = False
 
-    local_root = row.local_path_prefix or app_settings.local_path_prefix
-    mount_readable = os.path.isdir(local_root) and os.access(local_root, os.R_OK)
+    # "Movie mount" really means "can we read the library files". Playback reads
+    # the source_path stored on each scheduled movie (translated once at schedule
+    # time), so verify those directly. The path-prefix config is not a reliable
+    # proxy: when Plex's paths already match the mount no translation is set, and
+    # local_path_prefix may not point at a readable directory even though every
+    # movie file is reachable. Fall back to the configured root only when there
+    # is nothing scheduled to check.
+    scheduled_paths = [
+        m.source_path for m in session.exec(select(ScheduledMovie)).all() if m.source_path
+    ]
+    if scheduled_paths:
+        mount_readable = any(source_file_exists(p) for p in scheduled_paths)
+    else:
+        local_root = row.local_path_prefix or app_settings.local_path_prefix
+        mount_readable = (
+            bool(local_root) and os.path.isdir(local_root) and os.access(local_root, os.R_OK)
+        )
 
     stream_dir = app_settings.stream_dir
     try:

@@ -68,9 +68,17 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
+  // Captions are rendered by us (not the browser) so size/position are fully
+  // controllable and consistent across browsers — Firefox in particular gives
+  // almost no control over native ::cue styling. cuesRef holds the parsed cues;
+  // a rAF loop picks the active one against the video clock. subsOnRef mirrors
+  // subsOn so that loop always sees the latest toggle state.
+  const cuesRef = useRef<{ start: number; end: number; text: string }[]>([]);
+  const subsOnRef = useRef(false);
   const [chrome, setChrome] = useState(true);
   const [muted, setMuted] = useState(true);
   const [subsAvailable, setSubsAvailable] = useState(false);
+  const [cueText, setCueText] = useState("");
   const [subsOn, setSubsOn] = useState(() => {
     try {
       return localStorage.getItem("cc_subs") === "1";
@@ -78,6 +86,7 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
       return false;
     }
   });
+  subsOnRef.current = subsOn;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -97,10 +106,13 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
         hls.destroy();
         hlsRef.current = null;
       }
+      cuesRef.current = [];
+      setCueText("");
     };
 
     const init = () => {
       if (destroyed) return;
+      cuesRef.current = [];
       if (Hls.isSupported()) {
         const hls = new Hls({
           liveSyncDurationCount: 3,
@@ -108,12 +120,22 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
           backBufferLength: 15,
           maxBufferLength: 15,
           maxBufferSize: 20 * 1000 * 1000,
+          renderTextTracksNatively: false,
         });
         hlsRef.current = hls;
         hls.loadSource(STREAM_URL);
         hls.attachMedia(video);
         hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
           setSubsAvailable((hlsRef.current?.subtitleTracks?.length ?? 0) > 0);
+        });
+        hls.on(Hls.Events.CUES_PARSED, (_e, data) => {
+          if (data.type !== "subtitles") return;
+          const store = cuesRef.current;
+          for (const c of data.cues as VTTCue[]) {
+            store.push({ start: c.startTime, end: c.endTime, text: c.text });
+          }
+          // Bound memory on the long-running live stream.
+          if (store.length > 400) store.splice(0, store.length - 400);
         });
         hls.on(Hls.Events.FRAG_BUFFERED, () => {
           fatalCount = 0;
@@ -136,6 +158,7 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
           reloadTimer = window.setTimeout(init, 1200);
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Safari plays the master (and its subtitle rendition) natively.
         video.src = STREAM_URL;
         video.addEventListener("loadedmetadata", () => {
           setSubsAvailable(video.textTracks.length > 0);
@@ -144,6 +167,29 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
     };
 
     init();
+
+    // Draw the active caption ourselves. Runs off the video clock so it always
+    // matches whatever frame is on screen; only re-renders when the line changes.
+    let raf = 0;
+    const draw = () => {
+      raf = requestAnimationFrame(draw);
+      const v = videoRef.current;
+      if (!v || !subsOnRef.current) {
+        setCueText((prev) => (prev === "" ? prev : ""));
+        return;
+      }
+      const t = v.currentTime;
+      let text = "";
+      for (const c of cuesRef.current) {
+        if (t >= c.start && t < c.end) {
+          text = c.text;
+          break;
+        }
+      }
+      setCueText((prev) => (prev === text ? prev : text));
+    };
+    raf = requestAnimationFrame(draw);
+
     const preventSeek = () => {
       if (video.seekable.length > 0) {
         const edge = video.seekable.end(video.seekable.length - 1);
@@ -154,6 +200,7 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
     return () => {
       destroyed = true;
       window.clearTimeout(reloadTimer);
+      cancelAnimationFrame(raf);
       video.removeEventListener("seeking", preventSeek);
       teardown();
     };
@@ -171,9 +218,14 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
     const video = videoRef.current;
     if (hls) {
       const on = subsOn && (hls.subtitleTracks?.length ?? 0) > 0;
-      hls.subtitleDisplay = on;
+      // Selecting the track drives cue parsing (CUES_PARSED); -1 stops it.
       hls.subtitleTrack = on ? 0 : -1;
+      if (!on) {
+        cuesRef.current = [];
+        setCueText("");
+      }
     } else if (video) {
+      // Safari native path: toggle the browser-rendered track.
       for (let i = 0; i < video.textTracks.length; i++) {
         video.textTracks[i].mode = subsOn ? "showing" : "hidden";
       }
@@ -216,6 +268,9 @@ function Player({ progressSeconds, runtimeSeconds }: { progressSeconds: number; 
       onClick={wake}
     >
       <video ref={videoRef} autoPlay playsInline muted={muted} />
+      {subsOn && cueText && (
+        <div className={`cc-box${chrome ? " up" : ""}`}>{cueText}</div>
+      )}
       {muted && (
         <button className="sound-hint" onClick={toggleMute} aria-label="Turn on sound">
           <span aria-hidden="true">🔊</span> Tap For Sound
