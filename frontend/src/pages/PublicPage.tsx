@@ -92,6 +92,9 @@ function Player({
   // subsOn so that loop always sees the latest toggle state.
   const cuesRef = useRef<{ start: number; end: number; text: string }[]>([]);
   const subsOnRef = useRef(false);
+  // Whether this stream has actually begun playing — decides if it is safe to
+  // touch the muted flag yet (see the sound effect below).
+  const startedRef = useRef(false);
   const [chrome, setChrome] = useState(true);
   const [muted, setMuted] = useState(() => {
     try {
@@ -291,21 +294,33 @@ function Player({
 
   // The <video> always *mounts* muted — that is what guarantees the browser lets
   // it autoplay at all. Only once it is rolling do we apply the sound preference.
-  // Browsers refuse to unmute without a prior click, so if that is rejected we
-  // fall back to muted and the "Tap For Sound" prompt rather than a dead player.
+  // Browsers refuse to unmute without a prior click, and refusing *pauses* the
+  // video, so the fallback has to both re-mute and resume it.
   useEffect(() => {
     const v = videoRef.current;
-    if (!onAir || !v) return;
-    // Wait until it is actually playing: unmuting *before* autoplay starts gets
-    // the autoplay itself refused, which would leave a dead player instead of a
-    // silent one. Re-runs on every 'playing' (e.g. after a rebuffer) — harmless.
+    if (!onAir || !v) {
+      startedRef.current = false;
+      return;
+    }
     const apply = () => {
       v.muted = muted;
-      if (!muted) v.play().catch(() => setMuted(true));
+      // Always play(), never only when unmuting: a refused unmute leaves the
+      // video paused, and this is the call that resumes it once we fall back to
+      // muted. Guarding this behind `if (!muted)` strands it paused forever.
+      v.play().catch(() => {
+        if (!muted) setMuted(true);
+      });
     };
-    if (!v.paused) apply();
-    v.addEventListener("playing", apply);
-    return () => v.removeEventListener("playing", apply);
+    const onPlaying = () => {
+      startedRef.current = true;
+      apply();
+    };
+    v.addEventListener("playing", onPlaying);
+    // Only act once playback has begun. Before that, unmuting would get the
+    // autoplay itself refused; after it, this also covers resuming from a
+    // refused unmute (which 'playing' will never fire for, being paused).
+    if (startedRef.current) apply();
+    return () => v.removeEventListener("playing", onPlaying);
   }, [muted, onAir]);
 
   // Player keyboard shortcuts, the ones every video player uses. Ignored while
