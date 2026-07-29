@@ -169,6 +169,13 @@ export const deleteScheduledMovie = (id: number) =>
     true
   );
 
+export const clearSchedule = () =>
+  req<{ ok: boolean; deleted: number }>(
+    "/api/admin/schedule",
+    { method: "DELETE" },
+    true
+  );
+
 // --- Admin: channel control & diagnostics ---------------------------------
 export interface ChannelStatus {
   state: string;

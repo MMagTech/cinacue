@@ -171,6 +171,39 @@ def test_delete_missing_returns_404():
     assert r.status_code == 404
 
 
+# --- Clear all ---------------------------------------------------------------
+def test_clear_removes_all_movies():
+    c, csrf = _auth_client()
+    _add(c, csrf, "1", _min(8))
+    _add(c, csrf, "2", _min(11))
+    r = c.delete("/api/admin/schedule", headers={"X-CSRF-Token": csrf})
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 2
+    assert c.get("/api/admin/schedule").json()["movies"] == []
+
+
+def test_clear_keeps_active_days():
+    c, csrf = _auth_client()
+    _add(c, csrf, "1", _min(8))
+    c.put(
+        "/api/admin/schedule/active-days",
+        json={"active_days": [0, 1, 2, 3, 4]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    c.delete("/api/admin/schedule", headers={"X-CSRF-Token": csrf})
+    assert c.get("/api/admin/schedule").json()["active_days"] == [0, 1, 2, 3, 4]
+
+
+def test_clear_requires_csrf():
+    c, _ = _auth_client()
+    assert c.delete("/api/admin/schedule").status_code == 403
+
+
+def test_clear_requires_auth():
+    c = TestClient(app)
+    assert c.delete("/api/admin/schedule").status_code == 401
+
+
 # --- Active days -----------------------------------------------------------
 def test_set_active_days():
     c, csrf = _auth_client()

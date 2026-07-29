@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   getSchedule,
   addScheduledMovie,
   updateScheduledMovie,
   deleteScheduledMovie,
+  clearSchedule,
   setActiveDays,
   ScheduledMovie,
   ApiError,
@@ -28,9 +29,40 @@ function fromInput(v: string): number {
   const [h, m] = v.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 }
+function endMinute(m: ScheduledMovie): number {
+  return m.start_minute + Math.round(m.runtime_ms / 60000);
+}
 function endLabel(m: ScheduledMovie): string {
-  const end = m.start_minute + Math.round(m.runtime_ms / 60000);
+  const end = endMinute(m);
   return fmtTime(end) + (end >= 1440 ? " (next day)" : "");
+}
+function fmtDuration(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} hr ${m} min` : `${h} hr`;
+}
+
+const EMPTY_LINEUP_START = 7 * 60 + 30; // 07:30 — first slot of a fresh day
+
+/** Where the next movie most likely goes: the end of the lineup, rounded up
+ * to the next quarter-hour (07:30 when the lineup is empty). */
+function suggestedStart(movies: ScheduledMovie[]): number {
+  if (movies.length === 0) return EMPTY_LINEUP_START;
+  const end = Math.max(...movies.map(endMinute));
+  return (Math.ceil(end / 15) * 15) % 1440;
+}
+
+/** Advisory only — the server is the real overlap authority. */
+function findOverlap(
+  start: number,
+  runtimeMin: number,
+  movies: ScheduledMovie[]
+): ScheduledMovie | null {
+  for (const m of movies) {
+    if (start < endMinute(m) && m.start_minute < start + runtimeMin) return m;
+  }
+  return null;
 }
 function errText(err: unknown): string {
   if (err instanceof ApiError) {
@@ -52,18 +84,20 @@ export default function SchedulePage() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<PlexMovie[]>([]);
   const [chosen, setChosen] = useState<PlexMovie | null>(null);
-  const [startInput, setStartInput] = useState("20:00");
+  const [startInput, setStartInput] = useState(toInput(EMPTY_LINEUP_START));
   const [addError, setAddError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editInput, setEditInput] = useState("20:00");
+  const [editInput, setEditInput] = useState(toInput(EMPTY_LINEUP_START));
 
   const reload = async () => {
     const r = await getSchedule();
     setMovies(r.movies);
     setActiveDaysState(r.active_days);
     setTz(r.timezone);
+    return r;
   };
 
   useEffect(() => {
@@ -82,13 +116,13 @@ export default function SchedulePage() {
     }
   };
 
-  const openAdd = () => {
+  const openAdd = (prefillMinute?: number) => {
     setAdding(true);
     setChosen(null);
     setResults([]);
     setQ("");
     setAddError(null);
-    setStartInput("20:00");
+    setStartInput(toInput(prefillMinute ?? suggestedStart(movies)));
   };
 
   const runSearch = async (e: React.FormEvent) => {
@@ -110,10 +144,28 @@ export default function SchedulePage() {
     setAddError(null);
     try {
       await addScheduledMovie(chosen.rating_key, fromInput(startInput));
-      setAdding(false);
-      await reload();
+      // Chain-add: stay open, clear the search, and line the picker up with
+      // the new end of the lineup so the next movie is one search away.
+      const r = await reload();
+      setChosen(null);
+      setResults([]);
+      setQ("");
+      setStartInput(toInput(suggestedStart(r.movies)));
+      searchRef.current?.focus();
     } catch (err) {
       setAddError(errText(err));
+    }
+  };
+
+  const clearAll = async () => {
+    const n = movies.length;
+    if (!confirm(`Remove all ${n} movie${n === 1 ? "" : "s"} from the daily lineup?`)) return;
+    setError(null);
+    try {
+      await clearSchedule();
+      await reload();
+    } catch (err) {
+      setError(errText(err));
     }
   };
 
@@ -163,15 +215,22 @@ export default function SchedulePage() {
       <div>
         <div className="eyebrow">
           Daily Lineup <span className="muted">· {tz}</span>
-          {!adding && <button className="btn btn-sm" onClick={openAdd}>+ Add Movie</button>}
+          {!adding && (
+            <span style={{ display: "flex", gap: 8 }}>
+              {movies.length > 0 && (
+                <button className="btn ghost btn-sm" onClick={clearAll}>Clear Lineup</button>
+              )}
+              <button className="btn btn-sm" onClick={() => openAdd()}>+ Add Movie</button>
+            </span>
+          )}
         </div>
 
         {adding && (
           <div className="card" style={{ marginBottom: 16 }}>
             <form onSubmit={runSearch} className="search-row">
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Plex library…" autoFocus />
+              <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Plex library…" autoFocus />
               <button className="btn" type="submit" disabled={searching || !q.trim()}>{searching ? "…" : "Search"}</button>
-              <button type="button" className="btn ghost" onClick={() => setAdding(false)}>Cancel</button>
+              <button type="button" className="btn ghost" onClick={() => setAdding(false)}>Done</button>
             </form>
 
             <div style={{ display: "grid", gap: 8, margin: "14px 0" }}>
@@ -191,6 +250,17 @@ export default function SchedulePage() {
               <div>
                 <span className="flabel">Daily Start Time · {tz}</span>
                 <input type="time" value={startInput} onChange={(e) => setStartInput(e.target.value)} style={{ maxWidth: 160 }} />
+                {(() => {
+                  const start = fromInput(startInput);
+                  const end = start + chosen.runtime_minutes;
+                  const clash = findOverlap(start, chosen.runtime_minutes, movies);
+                  return (
+                    <div className={clash ? "error" : "muted"} style={{ marginTop: 8, fontSize: 13 }}>
+                      Ends {fmtTime(end)}{end >= 1440 ? " (next day)" : ""}
+                      {clash && <> — overlaps “{clash.title}” at {fmtTime(clash.start_minute)}</>}
+                    </div>
+                  );
+                })()}
                 {!chosen.source_available && (
                   <div className="error" style={{ marginTop: 8 }}>
                     Source file not found on the mount — check the movie path mapping before scheduling this title.
@@ -209,8 +279,17 @@ export default function SchedulePage() {
           <div className="card empty">No movies in the daily lineup yet.</div>
         ) : (
           <div className="lineup">
-            {movies.map((m) => (
-              <div className="slot" key={m.id}>
+            {[...movies].sort((a, b) => a.start_minute - b.start_minute).map((m, i, arr) => {
+              const gap = i > 0 ? m.start_minute - endMinute(arr[i - 1]) : 0;
+              return (
+              <Fragment key={m.id}>
+              {gap > 0 && (
+                <div className="gap-row">
+                  <span>{fmtDuration(gap)} off air</span>
+                  <button className="chip" onClick={() => openAdd(endMinute(arr[i - 1]))}>+ Fill</button>
+                </div>
+              )}
+              <div className="slot">
                 <span className="st">{fmtTime(m.start_minute)}</span>
                 <span className="thumb" style={m.poster_url ? { backgroundImage: `url(${m.poster_url})` } : undefined} />
                 <span className="name">
@@ -229,7 +308,9 @@ export default function SchedulePage() {
                   <button className="chip" onClick={() => remove(m.id)}>Remove</button>
                 </span>
               </div>
-            ))}
+              </Fragment>
+              );
+            })}
           </div>
         )}
 

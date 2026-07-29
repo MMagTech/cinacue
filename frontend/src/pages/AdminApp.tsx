@@ -9,7 +9,7 @@ type Tab = "dashboard" | "schedule" | "encoding";
 
 export default function AdminApp() {
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>("schedule");
 
   useEffect(() => {
     whoami()

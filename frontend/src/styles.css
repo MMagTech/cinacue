@@ -259,6 +259,8 @@ a { color: var(--gold); }
 .slot .name { font-weight: 640; font-size: 14px; }
 .slot .name .sub { display: block; font-weight: 500; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 .slot .act { display: flex; gap: 6px; }
+.gap-row { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--bg-2); color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; }
+.gap-row:last-child { border-bottom: 0; }
 .tag-live { font-family: var(--display); font-size: 9px; letter-spacing: 0.14em; color: var(--onair); border: 1px solid rgba(240, 69, 62, 0.4); border-radius: 6px; padding: 2px 6px; margin-left: 8px; }
 
 /* encoding */

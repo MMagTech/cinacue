@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import Response as RawResponse
-from sqlmodel import Session
+from sqlmodel import Session, delete
 
 from . import auth, plex_service, schedule_service, scheduler
 from .database import get_session, get_settings_row
@@ -298,6 +298,19 @@ def update_scheduled_movie(
     session.commit()
     session.refresh(existing)
     return _to_out(existing)
+
+
+@router.delete("/schedule")
+def clear_schedule(
+    session: Session = Depends(get_session),
+    _: None = Depends(auth.require_csrf),
+) -> dict:
+    """Remove every movie from the daily lineup. Settings and on-air days are
+    untouched."""
+    result = session.exec(delete(ScheduledMovie))
+    session.commit()
+    log.info("schedule cleared; removed=%s", result.rowcount)
+    return {"ok": True, "deleted": result.rowcount}
 
 
 @router.delete("/schedule/{movie_id}")
