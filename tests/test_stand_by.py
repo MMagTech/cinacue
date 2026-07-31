@@ -56,6 +56,7 @@ def _seed_active_movie() -> None:
 
 def test_stream_error_reports_stand_by(monkeypatch):
     _seed_active_movie()
+    monkeypatch.setattr(public_api.controller, "_enabled", True)
     monkeypatch.setattr(public_api.manager, "state", StreamState.error)
     body = client.get("/api/public/status").json()
     assert body["state"] == "stand_by"
@@ -64,6 +65,7 @@ def test_stream_error_reports_stand_by(monkeypatch):
 
 def test_streaming_reports_on_air(monkeypatch):
     _seed_active_movie()
+    monkeypatch.setattr(public_api.controller, "_enabled", True)
     monkeypatch.setattr(public_api.manager, "state", StreamState.streaming)
     body = client.get("/api/public/status").json()
     assert body["state"] == "on_air"
@@ -71,6 +73,29 @@ def test_streaming_reports_on_air(monkeypatch):
 
 
 def test_error_without_scheduled_movie_stays_off_air(monkeypatch):
+    monkeypatch.setattr(public_api.controller, "_enabled", True)
+    monkeypatch.setattr(public_api.manager, "state", StreamState.error)
+    body = client.get("/api/public/status").json()
+    assert body["state"] == "off_air"
+
+
+def test_manual_stop_mid_slot_reports_off_air(monkeypatch):
+    """Admin pressed Stop while a movie was scheduled: the viewer gets the
+    plain off-air card — no false On Air, no Back Shortly, and no Up Next
+    promise, since a disabled channel plays nothing until Start."""
+    _seed_active_movie()
+    monkeypatch.setattr(public_api.controller, "_enabled", False)
+    monkeypatch.setattr(public_api.manager, "state", StreamState.offline)
+    body = client.get("/api/public/status").json()
+    assert body["state"] == "off_air"
+    assert body["now_playing"] is None
+    assert body["next_up"] is None
+
+
+def test_disabled_takes_precedence_over_stale_error(monkeypatch):
+    """A stopped channel shows off_air even if the last run ended in error."""
+    _seed_active_movie()
+    monkeypatch.setattr(public_api.controller, "_enabled", False)
     monkeypatch.setattr(public_api.manager, "state", StreamState.error)
     body = client.get("/api/public/status").json()
     assert body["state"] == "off_air"

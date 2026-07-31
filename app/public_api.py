@@ -26,7 +26,7 @@ from .schemas import (
     UpcomingItem,
 )
 from .stream_manager import StreamState
-from .stream_runtime import manager
+from .stream_runtime import controller, manager
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -109,10 +109,20 @@ def status(
     playing = _now_playing(session)
     nxt = scheduler.next_movie(session)
     next_up = _upcoming_item(session, nxt) if nxt else None
-    # The schedule alone would claim "on air" over a dead stream. When a movie
-    # should be playing but the stream is stuck in error, report stand_by so
-    # the viewer shows the standby card instead of a black screen; the
-    # controller keeps retrying and the state flips back on its own.
+    # The schedule alone would claim "on air" over a dead stream. Two honest
+    # downgrades, both self-resolving on the next poll after recovery:
+    #  - admin pressed Stop mid-slot -> the plain off-air card with no Up Next
+    #    line: a disabled channel plays nothing until Start, so promising a
+    #    time would be a lie ("back shortly" doubly so);
+    #  - stream stuck in error -> stand_by ("Back Shortly"), since the
+    #    controller keeps retrying for the rest of the slot.
+    if playing is not None and not controller.enabled:
+        return PublicStatus(
+            state="off_air",
+            timezone=row.timezone,
+            now_playing=None,
+            next_up=None,
+        )
     if playing is not None and manager.state == StreamState.error:
         return PublicStatus(
             state="stand_by",
