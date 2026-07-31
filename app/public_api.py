@@ -25,6 +25,8 @@ from .schemas import (
     PublicStatus,
     UpcomingItem,
 )
+from .stream_manager import StreamState
+from .stream_runtime import manager
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -107,6 +109,17 @@ def status(
     playing = _now_playing(session)
     nxt = scheduler.next_movie(session)
     next_up = _upcoming_item(session, nxt) if nxt else None
+    # The schedule alone would claim "on air" over a dead stream. When a movie
+    # should be playing but the stream is stuck in error, report stand_by so
+    # the viewer shows the standby card instead of a black screen; the
+    # controller keeps retrying and the state flips back on its own.
+    if playing is not None and manager.state == StreamState.error:
+        return PublicStatus(
+            state="stand_by",
+            timezone=row.timezone,
+            now_playing=None,
+            next_up=next_up,
+        )
     return PublicStatus(
         state="on_air" if playing else "off_air",
         timezone=row.timezone,

@@ -61,7 +61,9 @@ export interface UpcomingItem {
 }
 
 export interface PublicStatus {
-  state: "on_air" | "off_air";
+  // stand_by = a movie should be airing but the stream is down; the viewer
+  // shows the standby card ("Back Shortly") instead of a black screen.
+  state: "on_air" | "off_air" | "stand_by";
   timezone: string;
   now_playing: NowPlaying | null;
   next_up: UpcomingItem | null;

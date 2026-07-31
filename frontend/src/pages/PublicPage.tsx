@@ -41,7 +41,7 @@ function countdown(iso: string): string {
   return `in ${Math.round(hr / 24)} days`;
 }
 
-function TopBar({ live, tz }: { live: boolean; tz: string }) {
+function TopBar({ state, tz }: { state: "on_air" | "off_air" | "stand_by"; tz: string }) {
   const [now, setNow] = useState("");
   useEffect(() => {
     const tick = () =>
@@ -53,8 +53,10 @@ function TopBar({ live, tz }: { live: boolean; tz: string }) {
   return (
     <div className="v-top">
       <span className="wordmark">CINA<b>CUE</b></span>
-      {live ? (
+      {state === "on_air" ? (
         <span className="onair"><span className="live" /> On Air</span>
+      ) : state === "stand_by" ? (
+        <span className="standby-badge"><span className="dot" /> Stand By</span>
       ) : (
         <span className="offair-badge"><span className="dot" /> Off Air</span>
       )}
@@ -337,11 +339,15 @@ function Player({
       } else if (k === "m") {
         e.preventDefault();
         toggleMute();
+      } else if (k === "c") {
+        // Match the CC button: only when the current stream has subtitles.
+        e.preventDefault();
+        if (subsAvailable) toggleSubs();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen, toggleMute]);
+  }, [fullscreen, toggleMute, toggleSubs, subsAvailable]);
 
   const pct = runtimeSeconds ? Math.min(100, (progressSeconds / runtimeSeconds) * 100) : 0;
 
@@ -533,7 +539,23 @@ export default function PublicPage() {
 
   const live = onAir && np !== null;
 
-  const standby = status?.next_up ? (
+  const standby = status?.state === "stand_by" ? (
+    // A movie should be airing but the stream is down. Same card as a normal
+    // gap so guests read it as scheduling; the wording + amber badge are the
+    // admin's tell. Self-resolving: the controller keeps retrying and status
+    // flips back to on_air the moment a start succeeds.
+    <>
+      <h1>Back Shortly</h1>
+      {status.next_up && (
+        <>
+          <p className="line">Up Next — <b>{status.next_up.title}</b></p>
+          <p className="count">
+            {fmtOfDay(status.next_up.scheduled_start, tz)} · {countdown(status.next_up.scheduled_start)}
+          </p>
+        </>
+      )}
+    </>
+  ) : status?.next_up ? (
     <>
       <h1>Nothing On Right Now</h1>
       <p className="line">Up Next — <b>{status.next_up.title}</b></p>
@@ -550,7 +572,7 @@ export default function PublicPage() {
 
   return (
     <div className="viewer">
-      <TopBar live={onAir} tz={tz} />
+      <TopBar state={status?.state ?? "off_air"} tz={tz} />
       <div className="stage">
         {/* One screen, always mounted, so fullscreen survives a movie ending. */}
         <Player

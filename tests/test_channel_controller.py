@@ -115,3 +115,59 @@ def test_disable_stops(monkeypatch):
     ctrl.disable()
     assert ctrl.enabled is False
     assert fm.stopped >= 1
+
+
+# --- Self-healing source paths ----------------------------------------------
+class _FakePlexClient:
+    def get_movie(self, rating_key):
+        return object()
+
+
+def test_missing_source_reresolved_from_plex(monkeypatch, tmp_path):
+    """The stored path is gone (Radarr upgrade); launch uses Plex's current one."""
+    mv = FakeMovie(1)  # source_path points at a file that does not exist
+    _patch(monkeypatch, mv)
+    fresh = tmp_path / "upgraded.mkv"
+    fresh.write_text("x")
+    monkeypatch.setattr(ss.plex_service, "plex_configured", lambda: True)
+    monkeypatch.setattr(ss.plex_service, "make_client", lambda row: _FakePlexClient())
+    monkeypatch.setattr(ss.plex_service, "local_source_path", lambda m, row: str(fresh))
+    fm = FakeManager()
+    ctrl = ss.ChannelController(fm)
+    ctrl.enable()
+    assert fm.started["source_path"] == str(fresh)
+    assert mv.source_path == str(fresh)
+
+
+def test_existing_source_skips_plex(monkeypatch, tmp_path):
+    """A healthy stored path launches directly — no Plex round-trip."""
+    existing = tmp_path / "1.mkv"
+    existing.write_text("x")
+    mv = FakeMovie(1)
+    mv.source_path = str(existing)
+    _patch(monkeypatch, mv)
+    calls: list[int] = []
+    monkeypatch.setattr(
+        ss.plex_service, "plex_configured", lambda: calls.append(1) or True
+    )
+    fm = FakeManager()
+    ctrl = ss.ChannelController(fm)
+    ctrl.enable()
+    assert fm.started["source_path"] == str(existing)
+    assert calls == []
+
+
+def test_plex_error_falls_back_to_stored_path(monkeypatch):
+    """Plex unreachable: launch with the stored path so retry/backoff applies."""
+    mv = FakeMovie(1)
+    _patch(monkeypatch, mv)
+    monkeypatch.setattr(ss.plex_service, "plex_configured", lambda: True)
+
+    def _boom(row):
+        raise RuntimeError("plex down")
+
+    monkeypatch.setattr(ss.plex_service, "make_client", _boom)
+    fm = FakeManager()
+    ctrl = ss.ChannelController(fm)
+    ctrl.enable()
+    assert fm.started["source_path"] == mv.source_path

@@ -12,17 +12,22 @@ controls. When disabled the controller keeps the stream stopped.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Optional
 
 from sqlmodel import Session
 
+from . import plex_service
 from . import scheduler as sched
 from .config import settings
 from .database import engine, get_settings_row
+from .logging_config import get_logger
 from .models import ScheduledMovie
 from .stream_manager import StreamManager, StreamState, _utcnow
+
+log = get_logger("controller")
 
 
 class ChannelController:
@@ -151,12 +156,45 @@ class ChannelController:
             )
             self._launch(active, offset, row)
 
+    def _resolve_source(self, movie: ScheduledMovie, row) -> str:
+        """The path stored at schedule time can rot before air time — Radarr
+        quality upgrades, renames, and library moves all change the file while
+        the movie stays scheduled for weeks. If the stored file is gone, ask
+        Plex for the movie's current file (the rating key survives file
+        replacements) and persist the fix. Falls back to the stored path when
+        Plex can't help, so the normal retry/backoff path still applies."""
+        stored = movie.source_path
+        if stored and os.path.exists(stored):
+            return stored
+        if not plex_service.plex_configured():
+            return stored
+        try:
+            fresh = plex_service.make_client(row).get_movie(movie.plex_rating_key)
+            local = plex_service.local_source_path(fresh, row)
+        except Exception as exc:
+            log.warning("source re-resolve failed for '%s': %s", movie.title, exc)
+            return stored
+        if not local or local == stored:
+            return stored
+        log.info("source re-resolved for '%s': %s -> %s", movie.title, stored, local)
+        movie.source_path = local
+        try:
+            with Session(engine) as session:
+                db_movie = session.get(ScheduledMovie, movie.id)
+                if db_movie is not None:
+                    db_movie.source_path = local
+                    session.add(db_movie)
+                    session.commit()
+        except Exception:  # pragma: no cover - persistence is best-effort
+            pass
+        return local
+
     def _launch(self, movie: ScheduledMovie, offset: float, row) -> None:
         self.manager.start(
             movie_id=movie.id,
             title=movie.title,
             rating_key=movie.plex_rating_key,
-            source_path=movie.source_path,
+            source_path=self._resolve_source(movie, row),
             offset_seconds=offset,
             maximum_resolution=row.maximum_resolution,
             video_bitrate_kbps=row.video_bitrate_kbps,

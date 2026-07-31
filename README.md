@@ -15,8 +15,8 @@ position — not a per-user, on-demand player.
   so the GPU cost is fixed no matter how many people watch — bandwidth is the
   only thing that scales with your audience.
 
-It ships as a prebuilt image on GHCR and is built + published by CI on every
-push to `main`.
+It ships as a prebuilt image on GHCR; CI runs the full test suite and only
+then builds + publishes on every push to `main`.
 
 ---
 
@@ -211,7 +211,7 @@ CinaCue/
 ├── docker-compose.unraid.yml   prebuilt GHCR image + Traefik (production)
 ├── docker-compose.local.yml    desktop/dev (software encoder)
 ├── Dockerfile               CUDA + FFmpeg/NVENC, Node build stage, gosu, healthcheck
-├── .github/workflows/docker.yml  CI: build + publish to GHCR on push to main
+├── .github/workflows/docker.yml  CI: pytest gate, then build + publish to GHCR
 └── tests/                   pytest suite
 ```
 
